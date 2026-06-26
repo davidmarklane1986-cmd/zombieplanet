@@ -1,0 +1,380 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: c477ce52a0047e141a698dd6879dd620, type: 3}
+  m_Name: FoliagePalette
+  m_EditorClassIdentifier: Assembly-CSharp::FoliagePalette
+  rules:
+  - name: Meadow Grass
+    enabled: 1
+    useBiomeGradientRule: 1
+    maxOtherBiomeInfluence: 0.5
+    requireBiomeDominance: 0
+    requiredBiomeIndex: 1
+    minRequiredBiomeWeight: 0.5
+    targetColour: {r: 0.22, g: 0.45, b: 0.02, a: 1}
+    colourTolerance: 0.35
+    matchByKey: 0
+    biomeIndex: 0
+    keyIndex: 0
+    prefabs:
+    - {fileID: 5200942723348184675, guid: b561bbb82e36b624baaf1efb8b3c549f, type: 3}
+    - {fileID: 4144096592550753612, guid: 0c1dcac843909d84ea695aea630c5391, type: 3}
+    - {fileID: 2334088181679017270, guid: ca740640297b5b242a52ea3435f33458, type: 3}
+    - {fileID: 6207103874580325224, guid: 98f22c5f3980af74db44ec3be9432047, type: 3}
+    - {fileID: 9029456444265441048, guid: 2befb7bf9f7e90d4e824c602ae4a2caf, type: 3}
+    - {fileID: 1997442676426876155, guid: 4db940c31d61ac149801c850fc645d68, type: 3}
+    targetCount: 250000
+    minSpacing: 0.5
+    edgeDensity: 0.05
+    densityFalloff: 1.6
+    latitudeInfluence: 0
+    latitudeWidth: 0.5
+    render: 0
+    orient: 0
+    scaleRange: {x: 0.8, y: 1.5}
+    maxSlope: 80
+    elevationRange: {x: 0, y: 1}
+    surfaceOffset: 0.02
+    shadowCasting: 0
+    receiveShadows: 1
+    forceDoubleSided: 1
+  - name: Forest Trees
+    enabled: 1
+    useBiomeGradientRule: 0
+    maxOtherBiomeInfluence: 0.5
+    requireBiomeDominance: 0
+    requiredBiomeIndex: 1
+    minRequiredBiomeWeight: 0.5
+    targetColour: {r: 0.22, g: 0.45, b: 0.02, a: 1}
+    colourTolerance: 0.22
+    matchByKey: 0
+    biomeIndex: 0
+    keyIndex: 0
+    prefabs:
+    - {fileID: 1407361867499988647, guid: aa07ef90276be0243a82d240a375ccd0, type: 3}
+    - {fileID: 5931541070575798227, guid: 333e5e428cfadec4c8d4dce5464f9868, type: 3}
+    - {fileID: 6173400473775740786, guid: d5b20b185f000ed40a6b742908511c3b, type: 3}
+    - {fileID: 7876372399032718668, guid: 8c775b0c00503bc4f9c046aaf8a2e7c3, type: 3}
+    - {fileID: 3549491696193570962, guid: c7885d31c21e151408acefe6e0bb0d8e, type: 3}
+    - {fileID: 5470334783366133394, guid: 73e40bae4cbe1a94e86a74f80038113c, type: 3}
+    - {fileID: 4836137536913213485, guid: dc411b60c7906a748b3884498923aad3, type: 3}
+    - {fileID: 8438708296732330263, guid: 8cb6f4a55b5f8f3418f7bcef525e2952, type: 3}
+    - {fileID: 8829261835345235027, guid: 89d9c8b7da9cd7f4383571d4892c0d56, type: 3}
+    - {fileID: 1927711857039744395, guid: 772dc9f9476f7b0419027ba1ebc324d7, type: 3}
+    - {fileID: 8147214219755857889, guid: 47f2510758cbe864cbbfb5c6a9244117, type: 3}
+    - {fileID: 2784225832885346123, guid: 8a440bf3564675648894686267594bb0, type: 3}
+    - {fileID: 7458129298693651815, guid: dfa988f37fee3084eb1d0b928c372340, type: 3}
+    - {fileID: 4327974857576654841, guid: 225b60e061584bd42b4cd5d3314abb67, type: 3}
+    - {fileID: 6065042556585673784, guid: de5b28cfa79dc9d4581565587946ede4, type: 3}
+    - {fileID: 3282470008824368152, guid: 8837b9ecfabe4a542bad36c6d49a59b6, type: 3}
+    - {fileID: 137868326559253706, guid: b4fc5ee14e66fc0478d455d2778f1bd1, type: 3}
+    - {fileID: 851362784403350696, guid: b721363445218dd43a402c6de476ce71, type: 3}
+    - {fileID: 7659710923089156290, guid: eb1009d6baffd7a45baf0b29b53b2712, type: 3}
+    - {fileID: 1275822319410683711, guid: 6eeed042fc49c3a45944c8d65fe1a568, type: 3}
+    - {fileID: 2909919183198447940, guid: 1dec3abcf6964844d9cf26956cb1fd02, type: 3}
+    - {fileID: 3504199449436356404, guid: c02649a63d9174d4f9669fdb4b81fb18, type: 3}
+    - {fileID: 2708359992387753906, guid: e3688312bfc099f4ca8e6951e09d5154, type: 3}
+    - {fileID: 5810971894193306706, guid: 26eb49ed7dc1b934fb6b0f6d0d7c9a5e, type: 3}
+    - {fileID: 6614615384591676187, guid: 031f72366f9d4f242b460bb6da7f2ec9, type: 3}
+    - {fileID: 122836989192820325, guid: 1c62191492c23b643b69e89139313d41, type: 3}
+    - {fileID: 5740933098998352139, guid: cff6e5616c424af44944dd186bbad63f, type: 3}
+    - {fileID: 3520854555946428344, guid: ed1eab28c5d14b346a68631f9252883b, type: 3}
+    - {fileID: 1617098335031802909, guid: cbb63a3e8d32b4345831f3b0a18605c6, type: 3}
+    - {fileID: 7065268660017855944, guid: 696d24f7df3d24247b9bd3427ee9ff0b, type: 3}
+    - {fileID: 5530620266991028893, guid: 7142a7705d7bc2b4392b7d01ca0c3b93, type: 3}
+    - {fileID: 5246441441259925091, guid: 3c1088cdebeb4794baceee1105d88b8d, type: 3}
+    - {fileID: 4024727497812585214, guid: f00dfd4e8d4a76249b5771bee114bd4f, type: 3}
+    targetCount: 1500
+    minSpacing: 6
+    edgeDensity: 0.05
+    densityFalloff: 2.2
+    latitudeInfluence: 0
+    latitudeWidth: 0.5
+    render: 1
+    orient: 1
+    scaleRange: {x: 4, y: 7}
+    maxSlope: 35
+    elevationRange: {x: 0.13, y: 0.46}
+    surfaceOffset: 0
+    shadowCasting: 0
+    receiveShadows: 1
+    forceDoubleSided: 0
+  - name: Beach Palms
+    enabled: 1
+    useBiomeGradientRule: 0
+    maxOtherBiomeInfluence: 0.5
+    requireBiomeDominance: 0
+    requiredBiomeIndex: 1
+    minRequiredBiomeWeight: 0.5
+    targetColour: {r: 0.83, g: 0.85, b: 0.4, a: 1}
+    colourTolerance: 0.16
+    matchByKey: 0
+    biomeIndex: 0
+    keyIndex: 0
+    prefabs:
+    - {fileID: 6436600519705492393, guid: a1049e11bea43ad4fa3f9022a9ee2670, type: 3}
+    - {fileID: 3878983149546430060, guid: c9812206899e4154fadc5e7aec08508b, type: 3}
+    - {fileID: 9103680974086716192, guid: 526f4245e8986294ca6e7d603d6af1a8, type: 3}
+    - {fileID: 4361266360261296577, guid: ae5a55d245dfc7c4f94acda0fceb4f7d, type: 3}
+    - {fileID: 963672990203317298, guid: 59ec42ad3967f6942b74e29e33550fc5, type: 3}
+    - {fileID: 1416123775706693963, guid: 6c2a98950116ade43aaa1ef120d755d9, type: 3}
+    targetCount: 500
+    minSpacing: 8
+    edgeDensity: 0.1
+    densityFalloff: 1.5
+    latitudeInfluence: 0
+    latitudeWidth: 0.5
+    render: 1
+    orient: 1
+    scaleRange: {x: 4, y: 6}
+    maxSlope: 30
+    elevationRange: {x: 0.04, y: 0.13}
+    surfaceOffset: 0
+    shadowCasting: 0
+    receiveShadows: 1
+    forceDoubleSided: 0
+  - name: Rocks
+    enabled: 1
+    useBiomeGradientRule: 0
+    maxOtherBiomeInfluence: 0.5
+    requireBiomeDominance: 0
+    requiredBiomeIndex: 1
+    minRequiredBiomeWeight: 0.5
+    targetColour: {r: 0.59, g: 0.37, b: 0.21, a: 1}
+    colourTolerance: 0.22
+    matchByKey: 0
+    biomeIndex: 0
+    keyIndex: 0
+    prefabs:
+    - {fileID: 6676777723566517957, guid: 6644349be8526c7459a1de828bb79351, type: 3}
+    - {fileID: 2071269123232405043, guid: e890a8c47288e004b8ddf74ccfc7f2cd, type: 3}
+    - {fileID: 9193879210159127081, guid: 4e758843ba20c1749bfe767881cc7352, type: 3}
+    - {fileID: 2356143443115414328, guid: 3da1299bf736c0d4eaa594b7a50b8010, type: 3}
+    - {fileID: 1782784957167214232, guid: 16ebcc5784e5ccc449c85c555182c7a1, type: 3}
+    - {fileID: 6013411645310386575, guid: a34ef98b1bb034a4789f34f9f2e716d7, type: 3}
+    - {fileID: 6935049144142228163, guid: 7675f91295665a44d9f0978626c5c606, type: 3}
+    - {fileID: 8885177421368968045, guid: 292a71e5d01c3f84ba70c233f3c857bc, type: 3}
+    - {fileID: 2730714258717751389, guid: d76ca196c85d9dd43a9f94c249849113, type: 3}
+    - {fileID: 8213359144610022932, guid: 0e205e99421841c49b87226f54d08059, type: 3}
+    - {fileID: 5701531726045400606, guid: 4afef7c8f7226ef4b9aa52273a19b147, type: 3}
+    - {fileID: 1010849608253085153, guid: 3d0bdc10adb7ef6418deb8ce48a0773d, type: 3}
+    - {fileID: 6669877797191806689, guid: 2e3bea795afd4524d95503338da9fa32, type: 3}
+    - {fileID: 216397042740417571, guid: d95c55c4c3590944895aea84d9e97fc6, type: 3}
+    - {fileID: 5824748264406966263, guid: cec936daae4fc9a4eb5b410a5d9aa255, type: 3}
+    - {fileID: 8350892824359915897, guid: af8347269fb6851479d16042dad8464f, type: 3}
+    - {fileID: 2447173593539704617, guid: ebbfef821374c8f4eae436b840764927, type: 3}
+    - {fileID: 1699265529094268574, guid: 32f7a30f2e1d5a74b9e15366aaf0e3b1, type: 3}
+    - {fileID: 1230184639116931882, guid: c2229794de9e4384f8034c551dfbb904, type: 3}
+    - {fileID: 968755387543834754, guid: dd6abb23fb9ec184b9bda7df8d4a6961, type: 3}
+    - {fileID: 2015142473732356629, guid: bcb2eafc802586d41a8123974d6001ab, type: 3}
+    - {fileID: 6178585330551097840, guid: 409859a750d309b48b33d29db712009c, type: 3}
+    - {fileID: 5947427810390188866, guid: ee6ca772a78577543ac82864344ef7f6, type: 3}
+    - {fileID: 8978440364144122533, guid: bd64fee1e7eaca24f8f1a24c429750cc, type: 3}
+    - {fileID: 435592453006866705, guid: 5e0d27d3ed0806e45b1833bc5b5269a5, type: 3}
+    - {fileID: 8264847311232022300, guid: 02870457b73840c42b8338193ae9fa81, type: 3}
+    - {fileID: 4107330396784943392, guid: 8fae3d875f4e1e84b8ef5da23cfb48d9, type: 3}
+    - {fileID: 2118387242173649494, guid: b3ef41ee43c2ac7499c4ddaea90c60b9, type: 3}
+    - {fileID: 3692664143896245138, guid: 546d30b4addfda940a0f86d3c1fb7eb7, type: 3}
+    - {fileID: 7690436524556368391, guid: 0d5eff94d8f8c834f8e6357e5a841c83, type: 3}
+    - {fileID: 3288399361213836099, guid: da5e979e451e7b64cb29d23911bdd667, type: 3}
+    - {fileID: 858081668534916685, guid: ef569cc16ef2fb24f95b437ea079eee1, type: 3}
+    - {fileID: 8667488937008104190, guid: a38d84aac52b9b547b5e0ea061a29eac, type: 3}
+    - {fileID: 3898471308034721989, guid: d59aebd7c8d32914fba554a041cb371b, type: 3}
+    - {fileID: 6456724263712384907, guid: 80d9b3856a62d6c4db23df4b1cb33755, type: 3}
+    - {fileID: 9210659898235921237, guid: 88ce95e67d6d83346906e5bb6cbacf6b, type: 3}
+    - {fileID: 591039057549608158, guid: e72a14eb1491aed469db7078c60e24b4, type: 3}
+    - {fileID: 5777581767550449495, guid: 749f068cb448961499c587f782496d22, type: 3}
+    - {fileID: 785795798102177865, guid: cbf9cfbeed9b82446b4c4369bc57c738, type: 3}
+    - {fileID: 3322231822977531067, guid: 6a94aee5ca1da474c94f895b065940b3, type: 3}
+    - {fileID: 6981334061800272259, guid: 23769b791be6a934fb734d87c7db5fdb, type: 3}
+    - {fileID: 4261924740656475759, guid: a47edd10e732e5f42800959a25d8328b, type: 3}
+    - {fileID: 1475190904445141109, guid: 5fb65e66c6cb9334ab7c208408922f93, type: 3}
+    - {fileID: 5315768950506952401, guid: 24312c6e0f1612546b7bac5f36ff5303, type: 3}
+    - {fileID: 26629221114722998, guid: 74296b711f586f44cbcebcefbf1156b9, type: 3}
+    - {fileID: 536395297864245676, guid: 529a5299e640ebe4a9b4d78267afcc8d, type: 3}
+    - {fileID: 7059025933821846937, guid: 13e02a14c49dcf641aac4890c1a8b454, type: 3}
+    - {fileID: 428642831015874255, guid: 83a5521f406764b4e9bdbf5dffab5cf5, type: 3}
+    - {fileID: 9220733640119556546, guid: 30f7590103053a74bbfdf163be062c1a, type: 3}
+    - {fileID: 1087877974493468860, guid: 83bb460625d8d554a8f0881d815fc0fe, type: 3}
+    - {fileID: 9093746941291867921, guid: ff474e9495e489b458c5f8e024e65c0a, type: 3}
+    - {fileID: 2801747479180155246, guid: 61da7c5dd94eaa84486291940ea347c5, type: 3}
+    - {fileID: 7494195031450208099, guid: 4d2f6ede63956cb419de656f1a04176a, type: 3}
+    - {fileID: 3604074332218272296, guid: a0ad22f71c4e58c4ba63b53af66cf7a0, type: 3}
+    - {fileID: 6624670886022986425, guid: 0e7bdbf1f52de914694a2332e48218bf, type: 3}
+    - {fileID: 2700811990504983897, guid: d1d09e3e3861cdb4c922b612d51424d2, type: 3}
+    - {fileID: 6841071689139659362, guid: 9f05c3a4997319e4a8bea60e214eda5a, type: 3}
+    - {fileID: 5383951031300081424, guid: 85a3b90dace79bb43bb8393089f8b88f, type: 3}
+    - {fileID: 6073450814551408090, guid: 63fa25f429fba7c429a4cdecc292feaa, type: 3}
+    - {fileID: 7870841727713951114, guid: 6f20548546af6c2418a90216d200b64d, type: 3}
+    targetCount: 2500
+    minSpacing: 4
+    edgeDensity: 0.15
+    densityFalloff: 1.5
+    latitudeInfluence: 0
+    latitudeWidth: 0.5
+    render: 1
+    orient: 1
+    scaleRange: {x: 1.5, y: 3.5}
+    maxSlope: 90
+    elevationRange: {x: 0.4, y: 1}
+    surfaceOffset: 0
+    shadowCasting: 0
+    receiveShadows: 1
+    forceDoubleSided: 0
+  - name: Desert Palms
+    enabled: 1
+    useBiomeGradientRule: 0
+    maxOtherBiomeInfluence: 0.5
+    requireBiomeDominance: 1
+    requiredBiomeIndex: 1
+    minRequiredBiomeWeight: 0.5
+    targetColour: {r: 0.83, g: 0.85, b: 0.4, a: 1}
+    colourTolerance: 0.2
+    matchByKey: 0
+    biomeIndex: 0
+    keyIndex: 0
+    prefabs:
+    - {fileID: 6436600519705492393, guid: a1049e11bea43ad4fa3f9022a9ee2670, type: 3}
+    - {fileID: 3878983149546430060, guid: c9812206899e4154fadc5e7aec08508b, type: 3}
+    - {fileID: 9103680974086716192, guid: 526f4245e8986294ca6e7d603d6af1a8, type: 3}
+    - {fileID: 4361266360261296577, guid: ae5a55d245dfc7c4f94acda0fceb4f7d, type: 3}
+    - {fileID: 963672990203317298, guid: 59ec42ad3967f6942b74e29e33550fc5, type: 3}
+    - {fileID: 1416123775706693963, guid: 6c2a98950116ade43aaa1ef120d755d9, type: 3}
+    targetCount: 400
+    minSpacing: 9
+    edgeDensity: 0.1
+    densityFalloff: 1.5
+    latitudeInfluence: 0
+    latitudeWidth: 0.5
+    render: 1
+    orient: 1
+    scaleRange: {x: 4, y: 6}
+    maxSlope: 30
+    elevationRange: {x: 0.04, y: 0.2}
+    surfaceOffset: 0
+    shadowCasting: 0
+    receiveShadows: 1
+    forceDoubleSided: 0
+  - name: Desert Rocks
+    enabled: 1
+    useBiomeGradientRule: 0
+    maxOtherBiomeInfluence: 0.5
+    requireBiomeDominance: 1
+    requiredBiomeIndex: 1
+    minRequiredBiomeWeight: 0.5
+    targetColour: {r: 0.59, g: 0.37, b: 0.21, a: 1}
+    colourTolerance: 0.22
+    matchByKey: 0
+    biomeIndex: 0
+    keyIndex: 0
+    prefabs:
+    - {fileID: 6676777723566517957, guid: 6644349be8526c7459a1de828bb79351, type: 3}
+    - {fileID: 2071269123232405043, guid: e890a8c47288e004b8ddf74ccfc7f2cd, type: 3}
+    - {fileID: 9193879210159127081, guid: 4e758843ba20c1749bfe767881cc7352, type: 3}
+    - {fileID: 2356143443115414328, guid: 3da1299bf736c0d4eaa594b7a50b8010, type: 3}
+    - {fileID: 1782784957167214232, guid: 16ebcc5784e5ccc449c85c555182c7a1, type: 3}
+    - {fileID: 6013411645310386575, guid: a34ef98b1bb034a4789f34f9f2e716d7, type: 3}
+    - {fileID: 6935049144142228163, guid: 7675f91295665a44d9f0978626c5c606, type: 3}
+    - {fileID: 8885177421368968045, guid: 292a71e5d01c3f84ba70c233f3c857bc, type: 3}
+    - {fileID: 2730714258717751389, guid: d76ca196c85d9dd43a9f94c249849113, type: 3}
+    - {fileID: 8213359144610022932, guid: 0e205e99421841c49b87226f54d08059, type: 3}
+    targetCount: 1500
+    minSpacing: 4
+    edgeDensity: 0.15
+    densityFalloff: 1.5
+    latitudeInfluence: 0
+    latitudeWidth: 0.5
+    render: 1
+    orient: 1
+    scaleRange: {x: 1.5, y: 3.5}
+    maxSlope: 90
+    elevationRange: {x: 0.2, y: 0.75}
+    surfaceOffset: 0
+    shadowCasting: 0
+    receiveShadows: 1
+    forceDoubleSided: 0
+  - name: Snow Rocks
+    enabled: 1
+    useBiomeGradientRule: 0
+    maxOtherBiomeInfluence: 0.5
+    requireBiomeDominance: 1
+    requiredBiomeIndex: 2
+    minRequiredBiomeWeight: 0.5
+    targetColour: {r: 0.59, g: 0.37, b: 0.21, a: 1}
+    colourTolerance: 0.22
+    matchByKey: 0
+    biomeIndex: 0
+    keyIndex: 0
+    prefabs:
+    - {fileID: 6676777723566517957, guid: 6644349be8526c7459a1de828bb79351, type: 3}
+    - {fileID: 2071269123232405043, guid: e890a8c47288e004b8ddf74ccfc7f2cd, type: 3}
+    - {fileID: 9193879210159127081, guid: 4e758843ba20c1749bfe767881cc7352, type: 3}
+    - {fileID: 2356143443115414328, guid: 3da1299bf736c0d4eaa594b7a50b8010, type: 3}
+    - {fileID: 1782784957167214232, guid: 16ebcc5784e5ccc449c85c555182c7a1, type: 3}
+    - {fileID: 6013411645310386575, guid: a34ef98b1bb034a4789f34f9f2e716d7, type: 3}
+    - {fileID: 6935049144142228163, guid: 7675f91295665a44d9f0978626c5c606, type: 3}
+    - {fileID: 8885177421368968045, guid: 292a71e5d01c3f84ba70c233f3c857bc, type: 3}
+    - {fileID: 2730714258717751389, guid: d76ca196c85d9dd43a9f94c249849113, type: 3}
+    - {fileID: 8213359144610022932, guid: 0e205e99421841c49b87226f54d08059, type: 3}
+    targetCount: 1200
+    minSpacing: 4.5
+    edgeDensity: 0.15
+    densityFalloff: 1.5
+    latitudeInfluence: 0
+    latitudeWidth: 0.5
+    render: 1
+    orient: 1
+    scaleRange: {x: 1.5, y: 3.5}
+    maxSlope: 90
+    elevationRange: {x: 0.65, y: 1}
+    surfaceOffset: 0
+    shadowCasting: 0
+    receiveShadows: 1
+    forceDoubleSided: 0
+  - name: Snow Pines
+    enabled: 1
+    useBiomeGradientRule: 0
+    maxOtherBiomeInfluence: 0.5
+    requireBiomeDominance: 1
+    requiredBiomeIndex: 2
+    minRequiredBiomeWeight: 0.5
+    targetColour: {r: 0.22, g: 0.45, b: 0.02, a: 1}
+    colourTolerance: 0.22
+    matchByKey: 0
+    biomeIndex: 0
+    keyIndex: 0
+    prefabs:
+    - {fileID: 1407361867499988647, guid: aa07ef90276be0243a82d240a375ccd0, type: 3}
+    - {fileID: 5931541070575798227, guid: 333e5e428cfadec4c8d4dce5464f9868, type: 3}
+    - {fileID: 6173400473775740786, guid: d5b20b185f000ed40a6b742908511c3b, type: 3}
+    - {fileID: 7876372399032718668, guid: 8c775b0c00503bc4f9c046aaf8a2e7c3, type: 3}
+    - {fileID: 3549491696193570962, guid: c7885d31c21e151408acefe6e0bb0d8e, type: 3}
+    - {fileID: 5470334783366133394, guid: 73e40bae4cbe1a94e86a74f80038113c, type: 3}
+    - {fileID: 4836137536913213485, guid: dc411b60c7906a748b3884498923aad3, type: 3}
+    - {fileID: 8438708296732330263, guid: 8cb6f4a55b5f8f3418f7bcef525e2952, type: 3}
+    - {fileID: 8829261835345235027, guid: 89d9c8b7da9cd7f4383571d4892c0d56, type: 3}
+    - {fileID: 1927711857039744395, guid: 772dc9f9476f7b0419027ba1ebc324d7, type: 3}
+    targetCount: 800
+    minSpacing: 7
+    edgeDensity: 0.05
+    densityFalloff: 2.2
+    latitudeInfluence: 0
+    latitudeWidth: 0.5
+    render: 1
+    orient: 1
+    scaleRange: {x: 4, y: 7}
+    maxSlope: 35
+    elevationRange: {x: 0.35, y: 0.65}
+    surfaceOffset: 0
+    shadowCasting: 0
+    receiveShadows: 1
+    forceDoubleSided: 0

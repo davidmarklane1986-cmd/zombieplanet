@@ -1,0 +1,19 @@
+Stargrave 1.3 — copy these into THIS folder (keep names or update StargravePort13SkyAtmosphereMenu.cs paths)
+
+SKYBOX (URP)
+  Copy your 1.3 skybox Material (.mat) and any Textures / Cubemaps it references.
+  Preferred name: Skybox.mat
+  Shader is usually: Universal Render Pipeline > Skybox > Panoramic (or 6 Sided)
+
+ATMOSPHERE (planet rim)
+  If 1.3 used a custom atmosphere shader + material, copy the .shader(s) and .mat.
+  Preferred name: Atmosphere.mat
+  Then assign that material on ColourSettings (atmosphere material) or run:
+  Tools > Stargrave > Apply Ported 1.3 Sky (PortedFrom13)
+
+DAY / NIGHT (optional)
+  Add PlanetDayNightController to the scene; after applying the port menu, it will use the
+  panoramic sky material for tint/exposure day-night if configured.
+
+After copying, use menu:
+  Tools > Stargrave > Apply Ported 1.3 Sky (PortedFrom13)

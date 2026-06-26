@@ -1,0 +1,45 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!21 &2100000
+Material:
+  serializedVersion: 8
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_Name: StargraveSpaceSkybox
+  m_Shader: {fileID: 4800000, guid: 7e3c9a1b2d4f4e5a8c6b0d1e2f3a4b5c, type: 3}
+  m_Parent: {fileID: 0}
+  m_ModifiedSerializedProperties: 0
+  m_ValidKeywords: []
+  m_InvalidKeywords: []
+  m_LightmapFlags: 4
+  m_EnableInstancingVariants: 0
+  m_DoubleSidedGI: 0
+  m_CustomRenderQueue: -1
+  stringTagMap: {}
+  disabledShaderPasses: []
+  m_LockedProperties: 
+  m_SavedProperties:
+    serializedVersion: 3
+    m_TexEnvs: []
+    m_Ints: []
+    m_Floats:
+    - _GradientPower: 1
+    - _NebulaScale: 1.4
+    - _NebulaStrength: 0.25
+    - _StarBrightness: 4
+    - _StarBrightnessVariance: 0.6
+    - _StarColorVariance: 0.6
+    - _StarDensity: 42
+    - _StarSize: 0.09
+    - _Twinkle: 0
+    - _TwinkleSpeed: 2
+    m_Colors:
+    - _BottomColor: {r: 0.004, g: 0.005, b: 0.014, a: 1}
+    - _NebulaColorA: {r: 0.15, g: 0.1, b: 0.35, a: 1}
+    - _NebulaColorB: {r: 0, g: 0.2, b: 0.25, a: 1}
+    - _StarColorBlue: {r: 0.6, g: 0.75, b: 1, a: 1}
+    - _StarColorRed: {r: 1, g: 0.5, b: 0.4, a: 1}
+    - _TopColor: {r: 0.012, g: 0.015, b: 0.035, a: 1}
+  m_BuildTextureStacks: []
