@@ -33,6 +33,9 @@ Material:
     - _StarColorVariance: 0.6
     - _StarDensity: 42
     - _StarSize: 0.09
+    - _SunGlowSize: 0.03
+    - _SunGlowStrength: 0.6
+    - _SunSize: 0.0012
     - _Twinkle: 0
     - _TwinkleSpeed: 2
     m_Colors:
@@ -41,5 +44,6 @@ Material:
     - _NebulaColorB: {r: 0, g: 0.2, b: 0.25, a: 1}
     - _StarColorBlue: {r: 0.6, g: 0.75, b: 1, a: 1}
     - _StarColorRed: {r: 1, g: 0.5, b: 0.4, a: 1}
+    - _SunColor: {r: 2.4, g: 2.2, b: 1.9, a: 1}
     - _TopColor: {r: 0.012, g: 0.015, b: 0.035, a: 1}
   m_BuildTextureStacks: []

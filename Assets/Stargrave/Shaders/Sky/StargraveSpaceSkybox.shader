@@ -23,6 +23,15 @@ Shader "Stargrave/Space Skybox"
         _NebulaScale ("Nebula Scale", Range(0.2, 5)) = 1.4
         _NebulaColorA ("Nebula Color A", Color) = (0.15, 0.10, 0.35, 1)
         _NebulaColorB ("Nebula Color B", Color) = (0.00, 0.20, 0.25, 1)
+
+        [Header(Sun)]
+        [HDR] _SunColor ("Sun Color (HDR)", Color) = (4.0, 3.6, 3.0, 1)
+        _SunSize ("Sun Size (angular)", Range(0.0005, 0.2)) = 0.03
+        _SunGlowSize ("Sun Glow Size", Range(0.0, 0.6)) = 0.25
+        _SunGlowStrength ("Sun Glow Strength", Range(0, 4)) = 1.2
+        // _SunDirection is intentionally NOT a material property; it is driven globally
+        // (Shader.SetGlobalVector("_SunDirection", -sun.forward)) by PlanetDayNightCycle.cs
+        // so the visible sun always follows the rotating directional light.
     }
 
     SubShader
@@ -68,6 +77,13 @@ Shader "Stargrave/Space Skybox"
             float _NebulaScale;
             fixed4 _NebulaColorA;
             fixed4 _NebulaColorB;
+
+            // Set globally each frame by PlanetDayNightCycle.cs (direction TOWARD the sun, world space).
+            float4 _SunDirection;
+            half4 _SunColor;
+            float _SunSize;
+            float _SunGlowSize;
+            float _SunGlowStrength;
 
             v2f vert(appdata v)
             {
@@ -215,6 +231,26 @@ Shader "Stargrave/Space Skybox"
 
                 // Additive crisp stars (HDR: bright cores can exceed 1.0 to pop and catch bloom).
                 col += stars(dir);
+
+                // Sun disc + soft glow, rendered at infinite distance in the direction TOWARD the sun.
+                // _SunDirection is driven globally to match the live directional light, so the visible
+                // sun stays aligned with the lit hemisphere / terminator. Skip if direction is unset.
+                float3 sunDir = _SunDirection.xyz;
+                float sunLen = length(sunDir);
+                if (sunLen > 0.5)
+                {
+                    sunDir /= sunLen;
+                    float d = dot(dir, sunDir);
+
+                    // Crisp-but-soft disc: edge softens over the inner ~half of _SunSize.
+                    float disc = smoothstep(1.0 - _SunSize, 1.0 - _SunSize * 0.5, d);
+
+                    // Wider halo that falls off smoothly around the disc.
+                    float glow = smoothstep(1.0 - _SunGlowSize, 1.0, d);
+                    glow = pow(glow, 2.0) * _SunGlowStrength;
+
+                    col += _SunColor.rgb * (disc + glow);
+                }
 
                 return half4(col, 1.0);
             }

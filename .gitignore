@@ -80,3 +80,7 @@ crashlytics-build.properties
 *.bak
 *.unitybak
 *.corrupt*
+
+# Large local scene-recovery snapshots (kept on disk, excluded from VCS)
+/Assets/_Recovery/
+/Assets/_Recovery.meta

@@ -146,14 +146,60 @@ public class SimpleFoliageSpawner : MonoBehaviour
     [Range(0f, 1f)]
     public float viewAngleMaxSmoothness = 0.08f;
 
+    [Header("Culling / LOD")]
+    [Tooltip("Disable ALL render-time culling (keep every spawned tree/rock active every frame). OFF by default " +
+             "so culling is ON automatically — including on the existing scene component, which deserializes " +
+             "this new field to false. Tick only to debug / compare.")]
+    public bool disableCulling = false;
+    [Tooltip("Optional explicit camera to cull against. Leave EMPTY to auto-detect the player camera " +
+             "(Camera.main, else the highest-depth enabled on-screen camera).")]
+    public Camera cullingCamera;
+    [Tooltip("Max distance (world units) at which spawned objects stay active. 0 = built-in default (400).")]
+    public float objectDrawDistance = 0f;
+    [Tooltip("World-unit size of the spatial culling cells (objects are bucketed so whole chunks cull at once). " +
+             "0 = built-in default (40).")]
+    public float cullChunkSize = 0f;
+    [Tooltip("Frustum margin (world units): activate a chunk slightly BEFORE it enters view so objects don't " +
+             "pop in when you turn. 0 = built-in default (15). A small hysteresis band on top avoids flicker.")]
+    public float objectFrustumMargin = 0f;
+
     [Header("Debug")]
     public bool logResults = true;
+    [Tooltip("Log a throttled 'visible/total chunks + camera' line so you can confirm culling is running.")]
+    public bool debugCulling = false;
+
+    const float DefaultObjectDrawDistance = 400f;
+    const float DefaultCullChunkSize = 40f;
+    const float DefaultObjectFrustumMargin = 15f;
+
+    // A spatial grid cell of spawned objects. Toggled active/inactive as a unit by distance + frustum culling
+    // so we never SetActive thousands of objects per frame — only on chunk visibility transitions.
+    class CullChunk
+    {
+        public readonly List<GameObject> objects = new List<GameObject>();
+        public Vector3 min, max;
+        public bool hasBounds;
+        public Vector3 center;
+        public float radius;
+        public Bounds bounds;
+        public bool active = true;
+        public float sortDist;
+    }
 
     Planet _planet;
     readonly Dictionary<string, int> _spawnedByRule = new Dictionary<string, int>();
     readonly List<Vector3> _registeredClusterCenters = new List<Vector3>();
     readonly List<Vector3> _ruleClusterCenters = new List<Vector3>();
     readonly List<Vector3> _globalSpawnedPositions = new List<Vector3>();
+
+    // Culling state.
+    readonly Dictionary<Vector3Int, CullChunk> _cullChunkMap = new Dictionary<Vector3Int, CullChunk>();
+    readonly List<CullChunk> _cullChunks = new List<CullChunk>();
+    static readonly System.Comparison<CullChunk> CullNearestFirst = (a, b) => a.sortDist.CompareTo(b.sortDist);
+    Camera _cam;
+    readonly Plane[] _frustumPlanes = new Plane[6];
+    bool _cullReady;
+    float _nextCullLogTime;
 
     void ApplyProfileIfConfigured()
     {
@@ -220,6 +266,9 @@ public class SimpleFoliageSpawner : MonoBehaviour
         _spawnedByRule.Clear();
         _registeredClusterCenters.Clear();
         _globalSpawnedPositions.Clear();
+        _cullChunkMap.Clear();
+        _cullChunks.Clear();
+        _cullReady = false;
 
         foreach (var rule in spawnRules)
         {
@@ -234,6 +283,8 @@ public class SimpleFoliageSpawner : MonoBehaviour
             int spawned = SpawnRule(rule, container.transform, targetCount);
             _spawnedByRule[rule.name] = spawned;
         }
+
+        FinalizeCullChunks();
     }
 
     int SpawnRule(BiomeSpawnRule rule, Transform container, int targetCount)
@@ -331,6 +382,7 @@ public class SimpleFoliageSpawner : MonoBehaviour
 
         spawnedPositions.Add(pos);
         _globalSpawnedPositions.Add(pos);
+        AddToCullChunk(inst, pos);
         if (rule.registerClusterCenters)
             _registeredClusterCenters.Add(pos);
         return true;
@@ -841,6 +893,171 @@ public class SimpleFoliageSpawner : MonoBehaviour
 
         _registeredClusterCenters.Clear();
         _globalSpawnedPositions.Clear();
+        _cullChunkMap.Clear();
+        _cullChunks.Clear();
+        _cullReady = false;
         Debug.Log("[SimpleFoliageSpawner] Cleared.");
+    }
+
+    // ---- Render-time culling for the spawned tree/rock GameObjects ----
+
+    float EffectiveCullChunkSize() => cullChunkSize > 0f ? cullChunkSize : DefaultCullChunkSize;
+
+    void AddToCullChunk(GameObject inst, Vector3 pos)
+    {
+        if (inst == null)
+            return;
+
+        float inv = 1f / Mathf.Max(0.0001f, EffectiveCullChunkSize());
+        var cell = new Vector3Int(
+            Mathf.FloorToInt(pos.x * inv),
+            Mathf.FloorToInt(pos.y * inv),
+            Mathf.FloorToInt(pos.z * inv));
+
+        if (!_cullChunkMap.TryGetValue(cell, out var chunk))
+        {
+            chunk = new CullChunk();
+            _cullChunkMap[cell] = chunk;
+        }
+        chunk.objects.Add(inst);
+        if (!chunk.hasBounds) { chunk.min = chunk.max = pos; chunk.hasBounds = true; }
+        else { chunk.min = Vector3.Min(chunk.min, pos); chunk.max = Vector3.Max(chunk.max, pos); }
+    }
+
+    void FinalizeCullChunks()
+    {
+        _cullChunks.Clear();
+        if (_cullChunkMap.Count == 0)
+        {
+            _cullReady = false;
+            return;
+        }
+
+        // Pad generously vertically as well — trees extend well above their base pivot, so a base-position
+        // AABB would under-cover the canopy and pop the tree out when its base cell leaves view.
+        float pad = Mathf.Max(8f, EffectiveCullChunkSize() * 0.5f);
+        Vector3 padV = new Vector3(pad, pad, pad);
+
+        foreach (var kv in _cullChunkMap)
+        {
+            var chunk = kv.Value;
+            Vector3 bmin = chunk.min - padV;
+            Vector3 bmax = chunk.max + padV;
+            chunk.center = (bmin + bmax) * 0.5f;
+            chunk.radius = ((bmax - bmin) * 0.5f).magnitude;
+            chunk.bounds = new Bounds(chunk.center, bmax - bmin);
+            _cullChunks.Add(chunk);
+        }
+        _cullReady = true;
+    }
+
+    Camera ResolveCullingCamera()
+    {
+        if (cullingCamera != null)
+            return cullingCamera;
+        if (_cam != null && _cam.isActiveAndEnabled && _cam.targetTexture == null)
+            return _cam;
+        _cam = Camera.main;
+        if (_cam == null)
+            _cam = PickBestOnScreenCamera();
+        return _cam;
+    }
+
+    static Camera PickBestOnScreenCamera()
+    {
+        var cams = Camera.allCameras; // enabled cameras only
+        Camera best = null;
+        float bestDepth = float.NegativeInfinity;
+        for (int i = 0; i < cams.Length; i++)
+        {
+            var c = cams[i];
+            if (c == null || c.targetTexture != null)
+                continue;
+            if (c.depth >= bestDepth) { bestDepth = c.depth; best = c; }
+        }
+        return best;
+    }
+
+    static Bounds Expanded(Bounds b, float margin)
+    {
+        b.Expand(2f * margin);
+        return b;
+    }
+
+    void Update()
+    {
+        if (!_cullReady || _cullChunks.Count == 0)
+            return;
+
+        bool cull = !disableCulling;
+        float dd = objectDrawDistance > 0f ? objectDrawDistance : DefaultObjectDrawDistance;
+
+        Vector3 camPos = Vector3.zero;
+        Plane[] planes = null;
+        if (cull)
+        {
+            var cam = ResolveCullingCamera();
+            if (cam == null)
+            {
+                cull = false; // no camera resolvable: fail safe to everything visible
+            }
+            else
+            {
+                camPos = cam.transform.position;
+                GeometryUtility.CalculateFrustumPlanes(cam, _frustumPlanes); // once per frame
+                planes = _frustumPlanes;
+            }
+        }
+
+        // Nearest-first so near objects activate before far ones on big camera moves (in-place sort, cached
+        // comparer => no per-frame allocation). SetActive only fires on a visibility transition.
+        for (int i = 0; i < _cullChunks.Count; i++)
+            _cullChunks[i].sortDist = (_cullChunks[i].center - camPos).sqrMagnitude;
+        if (_cullChunks.Count > 1)
+            _cullChunks.Sort(CullNearestFirst);
+
+        float onMargin = objectFrustumMargin > 0f ? objectFrustumMargin : DefaultObjectFrustumMargin;
+        float offMargin = onMargin + Mathf.Max(4f, onMargin * 0.4f);
+
+        int visible = 0;
+        for (int i = 0; i < _cullChunks.Count; i++)
+        {
+            var chunk = _cullChunks[i];
+            bool want;
+            if (!cull)
+            {
+                want = true;
+            }
+            else if (chunk.active)
+            {
+                float maxD = dd + offMargin + chunk.radius;
+                want = chunk.sortDist <= maxD * maxD
+                       && (planes == null || GeometryUtility.TestPlanesAABB(planes, Expanded(chunk.bounds, offMargin)));
+            }
+            else
+            {
+                float maxD = dd + onMargin + chunk.radius;
+                want = chunk.sortDist <= maxD * maxD
+                       && (planes == null || GeometryUtility.TestPlanesAABB(planes, Expanded(chunk.bounds, onMargin)));
+            }
+
+            if (want)
+                visible++;
+
+            if (want == chunk.active)
+                continue;
+            chunk.active = want;
+            var objs = chunk.objects;
+            for (int o = 0; o < objs.Count; o++)
+                if (objs[o] != null)
+                    objs[o].SetActive(want);
+        }
+
+        if (debugCulling && Time.unscaledTime >= _nextCullLogTime)
+        {
+            _nextCullLogTime = Time.unscaledTime + 1f;
+            string camName = cullingCamera != null ? cullingCamera.name : (_cam != null ? _cam.name : "<none>");
+            Debug.Log($"[SimpleFoliageSpawner] cull={cull} cam='{camName}' visibleChunks={visible}/{_cullChunks.Count} drawDistance={dd}");
+        }
     }
 }
