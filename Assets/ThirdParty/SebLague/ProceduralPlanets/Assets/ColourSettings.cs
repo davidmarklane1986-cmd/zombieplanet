@@ -27,15 +27,6 @@ public class ColourSettings : ScriptableObject
     [Tooltip("Colour for cliffs/rock (typically grey-brown).")]
     public Color steepSlopeColor = new Color(0.42f, 0.38f, 0.33f);
 
-    [Header("Water")]
-    [Tooltip("Show a water sphere just slightly larger than the planet (ocean world).")]
-    public bool useWater = false;
-    [Range(0.001f, 0.05f)]
-    [Tooltip("How much larger than the planet radius the water sphere is (e.g. 0.01 = 1% larger).")]
-    public float waterRadiusOffset = 0.01f;
-    [Tooltip("Optional. If null, a default material is created from the water shader.")]
-    public Material waterMaterial;
-
     [System.Serializable]
     public class HeightBand
     {
@@ -92,6 +83,12 @@ public class ColourSettings : ScriptableObject
 
         [Tooltip("World-space tiling for per-biome terrain textures (X Z scale).")]
         public Vector2 textureTiling = new Vector2(1f, 1f);
+
+        [Tooltip("Break up obvious tiling by blending three randomly offset/rotated texture samples (Heitz-style triangle-grid stochastic texturing).")]
+        public bool useStochasticTexturing = true;
+        [Range(1f, 8f)]
+        [Tooltip("Higher = sharper blend between stochastic samples (less visible triangle seams, slightly more contrast).")]
+        public float stochasticContrast = 4f;
     }
 
 }

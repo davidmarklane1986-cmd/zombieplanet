@@ -8,7 +8,7 @@ Material:
   m_PrefabInstance: {fileID: 0}
   m_PrefabAsset: {fileID: 0}
   m_Name: PlanetOceanWater
-  m_Shader: {fileID: 4800000, guid: f882079f47ec4e340bf57a5b0d27ca6b, type: 3}
+  m_Shader: {fileID: 4800000, guid: c480adee64428614f909f3bd0b6423ef, type: 3}
   m_Parent: {fileID: 0}
   m_ModifiedSerializedProperties: 0
   m_ValidKeywords: []
@@ -22,11 +22,61 @@ Material:
   m_LockedProperties: 
   m_SavedProperties:
     serializedVersion: 3
-    m_TexEnvs: []
+    m_TexEnvs:
+    - _CausticsTex:
+        m_Texture: {fileID: 2800000, guid: f1bdaa49db4e069449dd29dc620782b9, type: 3}
+        m_Scale: {x: 1, y: 1}
+        m_Offset: {x: 0, y: 0}
+    - _FoamDetailTex:
+        m_Texture: {fileID: 2800000, guid: cd93c6b740bc9f349889cec601c6f7f0, type: 3}
+        m_Scale: {x: 1, y: 1}
+        m_Offset: {x: 0, y: 0}
+    - _FoamMaskTex:
+        m_Texture: {fileID: 2800000, guid: 62a4cde23a9a5394895b2b4df1b446b9, type: 3}
+        m_Scale: {x: 1, y: 1}
+        m_Offset: {x: 0, y: 0}
+    - _FoamRampTex:
+        m_Texture: {fileID: 2800000, guid: 6e6ba2e0d73bf984f96e529138ea943f, type: 3}
+        m_Scale: {x: 1, y: 1}
+        m_Offset: {x: 0, y: 0}
+    - _NormalMap:
+        m_Texture: {fileID: 2800000, guid: f87d53fcaf34530488b706ee35d9b519, type: 3}
+        m_Scale: {x: 1, y: 1}
+        m_Offset: {x: 0, y: 0}
     m_Ints: []
     m_Floats:
-    - _FresnelPower: 2.2
-    - _Opacity: 0.5
+    - _CausticsDepthFade: 14
+    - _CausticsScale: 20
+    - _CausticsSpeed: 0.5
+    - _CausticsStrength: 0.35
+    - _DepthMaxDistance: 24
+    - _DepthPower: 4
+    - _DetailStrength: 0.1
+    - _FoamCutoff: 1
+    - _FoamDetailScale: 20
+    - _FoamDetailSpeed: 4
+    - _FoamIntensity: 4
+    - _FoamSharpness: 0.6
+    - _FoamWidth: 5
+    - _FresnelPower: 0.5
+    - _MirrorSmoothness: 1
+    - _NightDarkness: 0.22
+    - _NormalStrength: 0
+    - _Opacity: 0
+    - _RippleFadeDistance: 180
+    - _RippleFadeStart: 30
+    - _SmallRippleScale: 12
+    - _SmallRippleSpeed: 4
+    - _Smoothness: 1
+    - _SpecularIntensity: 8
+    - _TerminatorSoftness: 0.2
+    - _WaveFrequency: 0.1
+    - _WaveScale: 0.001
+    - _WaveSpeed: 8
     m_Colors:
+    - _DeepColor: {r: 0.05, g: 0.2, b: 0.42, a: 1}
+    - _FoamColor: {r: 1, g: 1, b: 1, a: 1}
+    - _ShallowColor: {r: 0.1, g: 0.54, b: 0.66, a: 0.35}
     - _WaterColor: {r: 0.1, g: 0.42, b: 0.82, a: 0.72}
   m_BuildTextureStacks: []
+  m_AllowLocking: 1

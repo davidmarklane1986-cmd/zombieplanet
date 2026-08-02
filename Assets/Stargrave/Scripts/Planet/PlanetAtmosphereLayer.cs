@@ -68,27 +68,30 @@ public class PlanetAtmosphereLayer : MonoBehaviour
     public Color sunsetColor = new Color(1f, 0.52f, 0.2f, 1f);
     [Range(0f, 2f)] public float sunsetStrength = 0.9f;
 
-    [Header("Night Fog")]
-    [Tooltip("Blend fog settings based on day/night using the sun direction.")]
+    [Header("Distance / Atmospheric Fog")]
+    [Tooltip("Blend fog settings based on day/night using the sun direction. Soft day haze + denser night fog.")]
     public bool controlFogWithDayNight = true;
-    [Range(-1f, 1f)] public float nightStartsAtSunDot = -0.05f;
-    [Range(0f, 1f)] public float transitionWidth = 0.2f;
-    [Tooltip("If enabled, daytime fog is forced off until night threshold is crossed.")]
-    public bool strictNoDayFog = true;
+    // Start dusk fog while the sun is still a bit above the local horizon (reduces silver wash).
+    [Range(-1f, 1f)] public float nightStartsAtSunDot = 0.18f;
+    [Range(0f, 1f)] public float transitionWidth = 0.28f;
+    [Tooltip("If enabled, daytime distance haze is forced off (not recommended — kills scale cue).")]
+    public bool strictNoDayFog = false;
     [Tooltip("Use camera position relative to planet to evaluate local day/night (recommended for spherical worlds).")]
     public bool useCameraLocalDayNight = true;
     [Min(0f)] public float fogBlendSpeed = 2f;
-    public FogMode fogMode = FogMode.ExponentialSquared;
-    [ColorUsage(false, true)] public Color dayFogColor = new Color(0.65f, 0.75f, 0.9f, 1f);
-    [ColorUsage(false, true)] public Color nightFogColor = new Color(0.05f, 0.08f, 0.16f, 1f);
+    [Tooltip("Linear start/end gives a clear haze belt for scale. Exp/Exp2 also supported via density.")]
+    public FogMode fogMode = FogMode.Linear;
+    // Day haze should read as soft sky blue (scale cue); night stays dark.
+    [ColorUsage(false, true)] public Color dayFogColor = new Color(0.55f, 0.68f, 0.86f, 1f);
+    [ColorUsage(false, true)] public Color nightFogColor = new Color(0.02f, 0.03f, 0.06f, 1f);
     [Tooltip("For testing: force full night fog regardless of sun angle.")]
     public bool forceNightFogDebug = false;
-    [Min(0f)] public float dayFogDensity = 0f;
-    [Min(0f)] public float nightFogDensity = 0.03f;
-    [Min(0f)] public float dayFogStartDistance = 0f;
-    [Min(0f)] public float nightFogStartDistance = 0f;
-    [Min(0f)] public float dayFogEndDistance = 300f;
-    [Min(0f)] public float nightFogEndDistance = 90f;
+    [Min(0f)] public float dayFogDensity = 0.0025f;
+    [Min(0f)] public float nightFogDensity = 0.012f;
+    [Min(0f)] public float dayFogStartDistance = 140f;
+    [Min(0f)] public float nightFogStartDistance = 50f;
+    [Min(0f)] public float dayFogEndDistance = 1200f;
+    [Min(0f)] public float nightFogEndDistance = 420f;
 
     private GameObject atmosphereObj;
     private Material _runtimeMaterial;
@@ -475,10 +478,19 @@ public class PlanetAtmosphereLayer : MonoBehaviour
         float startDistance = Mathf.Lerp(dayFogStartDistance, nightFogStartDistance, _nightFogBlend);
         float endDistance = Mathf.Lerp(dayFogEndDistance, nightFogEndDistance, _nightFogBlend);
 
-        // Keep fog keyword active while blending to avoid terrain shader fog variant flicker.
-        RenderSettings.fog = _nightFogBlend > 0.001f || density > 0.0001f;
+        // Keep fog on whenever day or night haze has any strength (avoids shader fog-keyword flicker).
+        bool hasLinearHaze = fogMode == FogMode.Linear && endDistance > startDistance + 1f;
+        RenderSettings.fog = density > 0.00005f || hasLinearHaze || _nightFogBlend > 0.001f;
         RenderSettings.fogMode = fogMode;
-        RenderSettings.fogColor = Color.Lerp(dayFogColor, nightFogColor, _nightFogBlend);
+        // Pull fog colour toward night faster than density so dusk isn't silver-grey.
+        float fogColorNight = 1f - (1f - _nightFogBlend) * (1f - _nightFogBlend);
+        Color fogCol = Color.Lerp(dayFogColor, nightFogColor, fogColorNight);
+        // Day haze may be sky-bright for scale; night stays dark (no silver wash).
+        float maxLum = Mathf.Lerp(0.55f, 0.06f, fogColorNight);
+        float lum = fogCol.r * 0.2126f + fogCol.g * 0.7152f + fogCol.b * 0.0722f;
+        if (lum > maxLum && lum > 1e-4f)
+            fogCol *= maxLum / lum;
+        RenderSettings.fogColor = fogCol;
         RenderSettings.fogDensity = density;
         RenderSettings.fogStartDistance = startDistance;
         RenderSettings.fogEndDistance = Mathf.Max(startDistance + 0.01f, endDistance);
@@ -538,14 +550,6 @@ public class PlanetAtmosphereLayer : MonoBehaviour
                 float s = Mathf.Max(transform.lossyScale.x, transform.lossyScale.y, transform.lossyScale.z);
                 r = planet.shapeSettings.planetRadius * s + extraPaddingWorld;
             }
-        }
-
-        PlanetWaterLayer water = GetComponent<PlanetWaterLayer>();
-        if (water != null)
-        {
-            float shell = water.GetWorldWaterShellRadius();
-            if (shell > 0f)
-                r = Mathf.Max(r, shell + extraPaddingWorld * 0.5f);
         }
 
         return Mathf.Max(0.5f, r * radiusMultiplier);

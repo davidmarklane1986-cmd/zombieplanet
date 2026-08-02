@@ -179,8 +179,14 @@ public class Projectile : MonoBehaviour
         var zombie = other.GetComponentInParent<ZombieAI>();
         if (zombie == null)
             return false;
-        zombie.TakeDamage(damage);
-        PlayerShooting.NotifyHitConfirmed();
+
+        // damage <= 0 means visual-only bolt (crosshair already applied the hit).
+        if (damage > 0)
+        {
+            zombie.TakeDamage(damage);
+            PlayerShooting.NotifyHitConfirmed();
+        }
+
         if (playImpactOnHit)
             PlayImpact(hitPoint, hitNormal);
         Destroy(gameObject);

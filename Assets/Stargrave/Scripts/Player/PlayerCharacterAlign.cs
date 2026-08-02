@@ -55,6 +55,15 @@ public class PlayerCharacterAlign : MonoBehaviour
         model.localRotation = Quaternion.Euler(0f, yaw, 0f);
         model.localScale = Vector3.one;
 
+        // Match planet matte shading (no skybox silver fill at night).
+        foreach (var r in model.GetComponentsInChildren<Renderer>(true))
+        {
+            var mats = r.materials;
+            for (int i = 0; i < mats.Length; i++)
+                ModelMatteLighting.MakeMatte(mats[i]);
+            r.materials = mats;
+        }
+
         // Disable colliders on model hierarchy so only the root CapsuleCollider is used
         foreach (var col in model.GetComponentsInChildren<Collider>(true))
         {

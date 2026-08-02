@@ -21,6 +21,24 @@ public class ShapeGenerator {
 
     public Vector3 CalculatePointOnPlanet(Vector3 pointOnUnitSphere)
     {
+        float elevation = CalculateUnscaledElevation(pointOnUnitSphere);
+        elevationMinMax.AddValue(elevation);
+        return pointOnUnitSphere * elevation;
+    }
+
+    /// <summary>
+    /// Returns the surface radius (distance from planet center, in LOCAL/unscaled mesh units) for a unit-sphere
+    /// direction — i.e. the magnitude of <see cref="CalculatePointOnPlanet"/> — WITHOUT mutating
+    /// <see cref="elevationMinMax"/>. This is the analytic, side-effect-free equivalent of raycasting the mesh:
+    /// the planet surface is a deterministic function of direction, so foliage placement can evaluate it directly.
+    /// It must NOT touch elevationMinMax, otherwise repeated runtime sampling would shift the Min/Max that the
+    /// shader and GetNormalizedElevationAtPosition normalize against.
+    /// </summary>
+    public float CalculateUnscaledElevation(Vector3 pointOnUnitSphere)
+    {
+        if (noiseFilters == null)
+            return (settings != null) ? settings.planetRadius : 0f;
+
         float firstLayerValue = 0;
         float elevation = 0;
 
@@ -41,9 +59,7 @@ public class ShapeGenerator {
                 elevation += noiseFilters[i].Evaluate(pointOnUnitSphere) * mask;
             }
         }
-        elevation = settings.planetRadius * (1 + elevation);
-        elevationMinMax.AddValue(elevation);
-        return pointOnUnitSphere * elevation;
+        return settings.planetRadius * (1 + elevation);
     }
 }
  

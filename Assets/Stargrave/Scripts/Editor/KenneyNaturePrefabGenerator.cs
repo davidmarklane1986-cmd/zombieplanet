@@ -4,13 +4,14 @@ using UnityEditor;
 using UnityEngine;
 
 /// <summary>
-/// Turns Kenney Nature Kit GLB models into categorized spawn prefabs for <see cref="SimpleFoliageSpawner"/>.
+/// Turns Kenney Nature Kit GLB models into categorized spawn prefabs consumed by the colour-driven
+/// foliage system (<see cref="FoliageByColour"/> / <see cref="FoliageColourSetup"/>).
 /// </summary>
 public static class KenneyNaturePrefabGenerator
 {
     public const string GlbRoot = "Assets/ThirdParty/Kenny/NatureKit/Models/GLTF format";
 
-    public static string PrefabRoot => FoliageRichPresetBuilder.KenneyFloraPaths.PrefabRoot;
+    public const string PrefabRoot = "Assets/ThirdParty/Kenny/NatureKit/Prefabs";
 
     public enum FloraCategory
     {
@@ -159,6 +160,8 @@ public static class KenneyNaturePrefabGenerator
                 if (baseMap != null)
                     mat.SetTexture("_BaseMap", baseMap);
                 mat.SetColor("_BaseColor", baseColor);
+                // Keep upgraded foliage matte like the planet terrain (no specular/reflections).
+                ModelMatteLighting.MakeMatte(mat);
                 changed = true;
             }
 

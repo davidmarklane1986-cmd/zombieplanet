@@ -34,6 +34,12 @@ public class FoliageColourRule
     public bool enabled = true;
 
     [Header("Targeting mode")]
+    [Tooltip("NEAREST-OF-PALETTE 'empty' zone. When the driver runs in Nearest Palette Colour mode and this " +
+             "rule's targetColour is the nearest palette colour for a surface point, place NOTHING there. " +
+             "Use for water / blue zones so they stay bare (winner-take-all: the point is NOT reassigned to " +
+             "another zone). Ignored by the other matching modes.")]
+    public bool placeNothing = false;
+
     [Tooltip("GRASS PARITY: ignore colour-distance and use biome 'biomeIndex's gradient-green-by-elevation test " +
              "(latitude-INDEPENDENT), exactly like the approved element-0 grass. Membership strength = that biome's " +
              "greenness (0..1); density uses edgeDensity/densityFalloff. Leave OFF for colour-swatch matching (trees/rocks).")]
@@ -54,7 +60,7 @@ public class FoliageColourRule
     public int keyIndex = 0;
 
     [Header("Prefabs")]
-    [Tooltip("Prefabs scattered for this rule (one is chosen at random per placement). Leave empty for the grass rule to auto-resolve from RichPlanetFlora.")]
+    [Tooltip("Prefabs scattered for this rule (one is chosen at random per placement). A rule with no prefabs places nothing — the palette builder assigns grass/tree/rock prefabs to every placing rule.")]
     public List<GameObject> prefabs = new List<GameObject>();
 
     [Header("Coverage / density")]
@@ -66,6 +72,13 @@ public class FoliageColourRule
     [Range(0f, 1f)] public float edgeDensity = 0.05f;
     [Tooltip("Falloff shape. 1 = linear; >1 concentrates instances into the best colour match and thins the edges faster.")]
     [Range(0.25f, 4f)] public float densityFalloff = 1.6f;
+
+    [Header("Clustering (optional — trees/groves)")]
+    [Tooltip("0 = uniform density across the colour zone. Raise to pack MORE trees into noise-defined grove " +
+             "cores (thickens existing clusters) while thinning the gaps between them. 1 = almost only in cores.")]
+    [Range(0f, 1f)] public float clusterStrength = 0f;
+    [Tooltip("World-space frequency of grove clusters. Smaller = larger/wider groves; larger = tighter clumps.")]
+    [Min(0.005f)] public float clusterScale = 0.035f;
 
     [Header("Biome exclusion (gradient rule only)")]
     [Tooltip("Reject/fade this rule where biomes OTHER than 'biomeIndex' influence the blended surface " +

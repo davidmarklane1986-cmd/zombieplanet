@@ -15,6 +15,8 @@ public class PlayerHealth : MonoBehaviour
     public float respawnDelaySeconds = 2.5f;
     [Tooltip("Invulnerability after respawn (seconds).")]
     public float respawnInvulnerabilitySeconds = 1.25f;
+    [Tooltip("Brief i-frames after each hit so a pack cannot dump every zombie's attack on the same frame.")]
+    [Min(0f)] public float hitInvulnerabilitySeconds = 0.85f;
 
     [Header("Spawn / Reset")]
     [Tooltip("If set, teleport here on respawn. Otherwise uses position/rotation captured at Start.")]
@@ -82,6 +84,12 @@ public class PlayerHealth : MonoBehaviour
             return;
 
         _currentHealth -= amount;
+        if (hitInvulnerabilitySeconds > 0f)
+            _invulnerableUntil = Mathf.Max(_invulnerableUntil, Time.time + hitInvulnerabilitySeconds);
+
+        // Distinct 2D hurt cue when the player actually takes damage (reuses the impact thud).
+        AudioManager.PlayHit2D();
+
         if (_currentHealth > 0)
             return;
         Die();
@@ -95,12 +103,8 @@ public class PlayerHealth : MonoBehaviour
         _currentHealth = 0;
         _dead = true;
         IsDead = true;
+        StopRigidbodyMotion();
         SetGameplayEnabled(false);
-        if (_rb != null)
-        {
-            _rb.linearVelocity = Vector3.zero;
-            _rb.angularVelocity = Vector3.zero;
-        }
 
         if (_anim != null)
             _anim.PlayDeathFromDamage();
@@ -110,11 +114,7 @@ public class PlayerHealth : MonoBehaviour
     public void RespawnNow(bool resetZombies)
     {
         transform.SetPositionAndRotation(_spawnPosition, _spawnRotation);
-        if (_rb != null)
-        {
-            _rb.linearVelocity = Vector3.zero;
-            _rb.angularVelocity = Vector3.zero;
-        }
+        StopRigidbodyMotion();
 
         _currentHealth = maxHealth;
         _invulnerableUntil = Time.time + Mathf.Max(0f, respawnInvulnerabilitySeconds);
@@ -141,18 +141,30 @@ public class PlayerHealth : MonoBehaviour
 
     public void SetGameplayControlEnabled(bool on)
     {
+        if (!on)
+            StopRigidbodyMotion();
         SetGameplayEnabled(on);
-        if (!on && _rb != null)
-        {
-            _rb.linearVelocity = Vector3.zero;
-            _rb.angularVelocity = Vector3.zero;
-        }
+    }
+
+    void StopRigidbodyMotion()
+    {
+        if (_rb == null)
+            return;
+        // Must clear velocity while non-kinematic — Unity errors (and can Error-Pause play) otherwise.
+        if (_rb.isKinematic)
+            _rb.isKinematic = false;
+        _rb.linearVelocity = Vector3.zero;
+        _rb.angularVelocity = Vector3.zero;
     }
 
     void SetGameplayEnabled(bool on)
     {
         if (_rb != null)
+        {
+            if (!on)
+                StopRigidbodyMotion();
             _rb.isKinematic = !on;
+        }
 
         if (TryGetComponent(out PlanetMotor_InputSystem motor))
             motor.enabled = on;
@@ -167,7 +179,7 @@ public class PlayerHealth : MonoBehaviour
         if (TryGetComponent(out PlayerCharacterAlign align))
             align.enabled = on;
 
-        var shooting = Object.FindFirstObjectByType<PlayerShooting>(FindObjectsInactive.Include);
+        var shooting = Object.FindAnyObjectByType<PlayerShooting>(FindObjectsInactive.Include);
         if (shooting != null)
             shooting.enabled = on;
     }

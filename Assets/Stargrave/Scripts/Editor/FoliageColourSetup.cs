@@ -558,7 +558,6 @@ public static class FoliageColourSetup
         driver.scatterPerFrame = 16000;
         driver.maxInstantiatesPerFrame = 200;
         driver.attemptBudgetMultiplier = 20;
-        driver.excludeUnderwater = true;
         driver.rayHeightAboveSurface = 80f;
         driver.enabled = true;
 
@@ -578,6 +577,29 @@ public static class FoliageColourSetup
 
         CreatePalette();
         return AssetDatabase.LoadAssetAtPath<FoliagePalette>(PalettePath);
+    }
+
+    // ---- Shared accessors so other editor tools (e.g. Build16ColourFoliagePalette) reuse the EXACT same
+    // asset references, folders and palette location without duplicating paths. ----
+    internal const string SharedPaletteFolder = PaletteFolder;
+    internal const string SharedPaletteName = PaletteName;
+    internal const string SharedPalettePath = PalettePath;
+
+    /// <summary>Grass clump prefabs (Kenny GroundCover + NatureKit grass), same set the grass rule uses.</summary>
+    internal static List<GameObject> GetGrassPrefabs() => GatherGrassPrefabs();
+    /// <summary>Forest tree prefabs (NatureKit Trees).</summary>
+    internal static List<GameObject> GetTreePrefabs() => GatherPrefabsInFolder(TreesFolder);
+    /// <summary>Palm prefabs (NatureKit Palms).</summary>
+    internal static List<GameObject> GetPalmPrefabs() => GatherPrefabsInFolder(PalmsFolder);
+    /// <summary>Rock prefabs (NatureKit Rocks).</summary>
+    internal static List<GameObject> GetRockPrefabs() => GatherPrefabsInFolder(RocksFolder);
+    /// <summary>Conifer prefabs for snow (pine/fir/spruce/conifer), falling back to all trees if none match.</summary>
+    internal static List<GameObject> GetPinePrefabs()
+    {
+        var pines = GatherPrefabsInFolderFiltered(TreesFolder, "pine", "fir", "spruce", "conifer");
+        if (pines.Count == 0)
+            pines = GatherPrefabsInFolder(TreesFolder);
+        return pines;
     }
 
     static List<GameObject> GatherGrassPrefabs()

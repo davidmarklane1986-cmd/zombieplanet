@@ -27,7 +27,15 @@ public class PlayerShooting : MonoBehaviour
     [Tooltip("Projectile spawn position. When possible this is resolved from the animated character rig (Muzzle_Bone / Weapon_Bone) instead of the camera.")]
     public Transform firePoint;
     public float projectileSpeed = 160f;
-    public float fireCooldown = 0.35f;
+    [Tooltip("Time between shots while the trigger is held (within a magazine burst).")]
+    public float fireCooldown = 0.18f;
+    [Header("Auto Fire / Magazine")]
+    [Tooltip("Hold LMB / RT to keep firing. Release to stop immediately.")]
+    public bool holdToFire = true;
+    [Tooltip("Shots fired in a burst before the reload pause.")]
+    [Min(1)] public int shotsPerMagazine = 6;
+    [Tooltip("Cooldown after a magazine empties before the next burst can start (while still holding).")]
+    [Min(0.05f)] public float reloadCooldown = 1.5f;
     [Tooltip("Spawn slightly in front of the fire point / camera so the orb does not clip inside geometry.")]
     public float spawnForwardOffset = 0.35f;
     [Tooltip("When enabled, the projectile is aimed at the exact crosshair contact point from the muzzle.")]
@@ -57,6 +65,8 @@ public class PlayerShooting : MonoBehaviour
     public float lockOnRange = 0f;
 
     float _nextFireTime;
+    float _reloadReadyTime;
+    int _shotsRemaining;
     PlayerBuffController _buffs;
     Transform _playerRoot;
     CombatTargeting _combatTargeting;
@@ -107,6 +117,7 @@ public class PlayerShooting : MonoBehaviour
         if (playerCamera == null)
             playerCamera = Camera.main;
         projectileSpeed = Mathf.Max(projectileSpeed, 160f);
+        _shotsRemaining = Mathf.Max(1, shotsPerMagazine);
 
         _playerRoot = ResolvePlayerRoot();
         if (preferCharacterModelMuzzle && (firePoint == null || IsCameraAnchoredFirePoint(_playerRoot, firePoint)))
@@ -309,16 +320,77 @@ public class PlayerShooting : MonoBehaviour
         }
 
         System.Array.Sort(hits, CompareRaycastHitsByDistance);
+
+        // Prefer the first zombie under the crosshair. World blockers (terrain/props) only
+        // stop the shot if they are closer than that zombie.
+        RaycastHit? firstWorld = null;
         for (int i = 0; i < hits.Length; i++)
         {
-            if (IsIgnoredCrosshairCollider(hits[i].collider))
+            Collider col = hits[i].collider;
+            if (IsIgnoredCrosshairCollider(col))
                 continue;
 
-            hit = hits[i];
+            if (col.GetComponentInParent<ZombieAI>() != null)
+            {
+                if (firstWorld.HasValue && firstWorld.Value.distance + 0.05f < hits[i].distance)
+                {
+                    hit = firstWorld.Value;
+                    return true;
+                }
+
+                hit = hits[i];
+                return true;
+            }
+
+            if (!firstWorld.HasValue && !col.isTrigger)
+                firstWorld = hits[i];
+        }
+
+        if (firstWorld.HasValue)
+        {
+            hit = firstWorld.Value;
             return true;
         }
 
         hit = new RaycastHit();
+        return false;
+    }
+
+    /// <summary>
+    /// Damages the zombie under the screen-center crosshair (camera ray). Returns true if a zombie was hit.
+    /// </summary>
+    bool TryDamageZombieFromCrosshair()
+    {
+        Camera cam = GetShootCamera();
+        ZombieAI lockOnZombie;
+        Vector3 lockOnAimPoint;
+        if (TryGetLockOnTarget(cam, out lockOnZombie, out lockOnAimPoint) && lockOnZombie != null)
+        {
+            lockOnZombie.TakeDamage(GetBuffedDamage(damagePerShot));
+            NotifyHitConfirmed();
+            return true;
+        }
+
+        if (TryGetCrosshairHit(out RaycastHit hit))
+        {
+            var zombie = hit.collider.GetComponentInParent<ZombieAI>();
+            if (zombie != null)
+            {
+                zombie.TakeDamage(GetBuffedDamage(damagePerShot));
+                NotifyHitConfirmed();
+                return true;
+            }
+        }
+
+        ZombieAI assistedZombie;
+        Vector3 assistedAimPoint;
+        if (TryGetAimAssistTarget(cam, out assistedZombie, out assistedAimPoint) && assistedZombie != null)
+        {
+            assistedZombie.TakeDamage(GetBuffedDamage(damagePerShot));
+            NotifyHitConfirmed();
+            return true;
+        }
+
         return false;
     }
 
@@ -433,20 +505,66 @@ public class PlayerShooting : MonoBehaviour
         ResolveBuffController();
 
         float rof = _buffs != null ? Mathf.Max(0.05f, _buffs.CombinedFireRateMultiplier) : 1f;
-        float cooldown = fireCooldown / rof;
+        float shotInterval = fireCooldown / rof;
+        float reloadInterval = Mathf.Max(0.05f, reloadCooldown);
         bool rapidFireActive = HasRapidFirePowerUp();
-        bool wantsFire = rapidFireActive ? WantsFireHeld() : WantsFirePressedThisFrame();
+        bool triggerHeld = WantsFireHeld();
 
-        if (!wantsFire || Time.time < _nextFireTime)
+        // Rapid Fire duration only drains while the trigger is held.
+        if (rapidFireActive && triggerHeld && _buffs != null)
+            _buffs.ConsumeBuffTime("PowerUp_RapidFire", Time.deltaTime);
+
+        // Hold-to-fire is the default; semi-auto (click each shot) remains available if holdToFire is off.
+        // Rapid Fire always holds-to-spray (original behaviour).
+        bool wantsFire = (holdToFire || rapidFireActive) ? triggerHeld : WantsFirePressedThisFrame();
+        if (!wantsFire)
             return;
 
-        _nextFireTime = Time.time + cooldown;
+        if (Time.time < _nextFireTime)
+            return;
+
+        // Rapid Fire power-up: original infinite spray — no magazine, no reload.
+        if (rapidFireActive)
+        {
+            _nextFireTime = Time.time + shotInterval;
+            _shotsRemaining = Mathf.Max(1, shotsPerMagazine); // leave mag full for when the buff ends
+            _reloadReadyTime = 0f;
+        }
+        else
+        {
+            // Empty magazine: wait out the reload pause, then top up and continue if still held.
+            if (_shotsRemaining <= 0)
+            {
+                if (Time.time < _reloadReadyTime)
+                    return;
+                _shotsRemaining = Mathf.Max(1, shotsPerMagazine);
+            }
+
+            _shotsRemaining--;
+            if (_shotsRemaining <= 0)
+            {
+                _reloadReadyTime = Time.time + reloadInterval;
+                _nextFireTime = _reloadReadyTime;
+            }
+            else
+            {
+                _nextFireTime = Time.time + shotInterval;
+            }
+        }
+
         ShotFired?.Invoke();
 
+        // Sci-fi blaster "pew" (generated clip, random variation + slight pitch jitter), 2D so it's
+        // crisp regardless of muzzle position; honours pause via AudioListener.pause.
+        AudioManager.PlayShoot();
+
+        // Damage is always resolved from the camera crosshair (what you see is what you hit).
+        // Projectiles are kept as a visual-only trail when a zombie was already hit-scanned.
+        bool damagedFromCrosshair = TryDamageZombieFromCrosshair();
         if (projectilePrefab != null)
-            FireProjectile();
-        else
-            FireRaycast();
+            FireProjectile(visualOnly: damagedFromCrosshair);
+        else if (!damagedFromCrosshair)
+            FireRaycast(); // lock-on / aim-assist fallbacks when no projectile and no direct hit
     }
 
     void ResolveBuffController()
@@ -470,40 +588,13 @@ public class PlayerShooting : MonoBehaviour
         return Mathf.Max(1, Mathf.RoundToInt(baseDamage * _buffs.CombinedDamageMultiplier));
     }
 
-    /// <summary>Hit-scan: ray from camera through screen center (like PlayerShoot.cs). No prefab needed.</summary>
+    /// <summary>Hit-scan fallbacks when no projectile prefab is assigned and the direct crosshair pass missed.</summary>
     void FireRaycast()
     {
-        Camera cam = GetShootCamera();
-        ZombieAI lockOnZombie;
-        Vector3 lockOnAimPoint;
-        if (TryGetLockOnTarget(cam, out lockOnZombie, out lockOnAimPoint) && lockOnZombie != null)
-        {
-            lockOnZombie.TakeDamage(GetBuffedDamage(damagePerShot));
-            NotifyHitConfirmed();
-            return;
-        }
-
-        if (TryGetCrosshairHit(out RaycastHit hit))
-        {
-            var zombie = hit.collider.GetComponentInParent<ZombieAI>();
-            if (zombie != null)
-            {
-                zombie.TakeDamage(GetBuffedDamage(damagePerShot));
-                NotifyHitConfirmed();
-            }
-            return;
-        }
-
-        ZombieAI assistedZombie;
-        Vector3 assistedAimPoint;
-        if (TryGetAimAssistTarget(cam, out assistedZombie, out assistedAimPoint) && assistedZombie != null)
-        {
-            assistedZombie.TakeDamage(GetBuffedDamage(damagePerShot));
-            NotifyHitConfirmed();
-        }
+        TryDamageZombieFromCrosshair();
     }
 
-    void FireProjectile()
+    void FireProjectile(bool visualOnly = false)
     {
         Camera cam = GetShootCamera();
 
@@ -530,7 +621,10 @@ public class PlayerShooting : MonoBehaviour
         GameObject p = Instantiate(projectilePrefab, origin, Quaternion.LookRotation(dir));
         var proj = p.GetComponent<Projectile>();
         if (proj != null)
-            proj.damage = GetBuffedDamage(proj.damage);
+        {
+            // Crosshair already applied damage — keep the bolt as a visual so we don't double-hit.
+            proj.damage = visualOnly ? 0 : GetBuffedDamage(proj.damage);
+        }
 
         Rigidbody rb = p.GetComponent<Rigidbody>();
         if (rb != null)

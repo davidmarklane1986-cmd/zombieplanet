@@ -31,48 +31,6 @@ public class Planet : MonoBehaviour
     [SerializeField, HideInInspector]
     MeshFilter[] meshFilters;
     TerrainFace[] terrainFaces;
-    [SerializeField, HideInInspector]
-    GameObject waterObject;
-    static Mesh s_LayerSphereMesh;
-
-    static Mesh GetLayerSphereMesh()
-    {
-        if (s_LayerSphereMesh != null) return s_LayerSphereMesh;
-        int segs = 32;
-        var vertices = new List<Vector3>();
-        var triangles = new List<int>();
-        for (int lat = 0; lat <= segs; lat++)
-        {
-            float v = lat / (float)segs;
-            float latRad = Mathf.PI * (v - 0.5f);
-            float y = Mathf.Sin(latRad);
-            float r = Mathf.Cos(latRad);
-            for (int lon = 0; lon <= segs; lon++)
-            {
-                float u = lon / (float)segs;
-                float lonRad = 2f * Mathf.PI * u;
-                vertices.Add(new Vector3(r * Mathf.Cos(lonRad), y, r * Mathf.Sin(lonRad)) * 0.5f);
-            }
-        }
-        for (int lat = 0; lat < segs; lat++)
-        for (int lon = 0; lon < segs; lon++)
-        {
-            int i = lat * (segs + 1) + lon;
-            triangles.Add(i);
-            triangles.Add(i + segs + 1);
-            triangles.Add(i + 1);
-            triangles.Add(i + 1);
-            triangles.Add(i + segs + 1);
-            triangles.Add(i + segs + 2);
-        }
-        var mesh = new Mesh();
-        mesh.name = "LayerSphere";
-        mesh.SetVertices(vertices);
-        mesh.SetTriangles(triangles, 0);
-        mesh.RecalculateNormals();
-        s_LayerSphereMesh = mesh;
-        return mesh;
-    }
 
     void Initialize()
     {
@@ -106,52 +64,6 @@ public class Planet : MonoBehaviour
             terrainFaces[i] = new TerrainFace(shapeGenerator, meshFilters[i].sharedMesh, resolution, directions[i]);
             bool renderFace = faceRenderMask == FaceRenderMask.All || (int)faceRenderMask - 1 == i;
             meshFilters[i].gameObject.SetActive(renderFace);
-        }
-
-        if (colourSettings.useWater)
-        {
-            if (GetComponent<PlanetWaterLayer>() != null)
-            {
-                if (waterObject != null)
-                    waterObject.SetActive(false);
-            }
-            else
-            {
-                if (waterObject == null)
-                {
-                    var t = transform.Find("Water");
-                    waterObject = t != null ? t.gameObject : null;
-                    if (waterObject == null)
-                    {
-                        waterObject = new GameObject("Water");
-                        waterObject.transform.SetParent(transform, false);
-                    }
-                }
-                if (waterObject.GetComponent<MeshFilter>() == null)
-                    waterObject.AddComponent<MeshFilter>();
-                if (waterObject.GetComponent<MeshRenderer>() == null)
-                    waterObject.AddComponent<MeshRenderer>();
-                var waterFilter = waterObject.GetComponent<MeshFilter>();
-                var waterRenderer = waterObject.GetComponent<MeshRenderer>();
-                waterFilter.sharedMesh = GetLayerSphereMesh();
-                Material mat = colourSettings.waterMaterial;
-                if (mat == null)
-                {
-                    var shader = Shader.Find("ProceduralPlanets/Planet Water");
-                    mat = shader != null ? new Material(shader) : null;
-                }
-                if (mat != null)
-                    waterRenderer.sharedMaterial = mat;
-                waterObject.transform.localPosition = Vector3.zero;
-                waterObject.transform.localRotation = Quaternion.identity;
-                waterObject.SetActive(true);
-                UpdateWaterScale();
-            }
-        }
-        else
-        {
-            if (waterObject != null)
-                waterObject.SetActive(false);
         }
     }
 
@@ -194,7 +106,6 @@ public class Planet : MonoBehaviour
         {
             Initialize();
             GenerateColours();
-            UpdateWaterScale();
         }
     }
     
@@ -231,18 +142,6 @@ public class Planet : MonoBehaviour
         }
 
         colourGenerator.UpdateElevation(shapeGenerator.elevationMinMax);
-        UpdateWaterScale();
-    }
-
-    void UpdateWaterScale()
-    {
-        if (GetComponent<PlanetWaterLayer>() != null)
-            return;
-        if (waterObject == null || !waterObject.activeSelf || shapeSettings == null || colourSettings == null || !colourSettings.useWater)
-            return;
-        float planetRadius = shapeSettings.planetRadius;
-        float waterRadius = planetRadius * (1f + colourSettings.waterRadiusOffset);
-        waterObject.transform.localScale = Vector3.one * 2f * waterRadius;
     }
 
     void GenerateColours()
@@ -437,6 +336,38 @@ public class Planet : MonoBehaviour
     }
 
     /// <summary>
+    /// Classifies the LAND surface under a world position into a coarse footstep category, reusing the
+    /// same authoritative gradient-key colour the shader paints (<see cref="GetSurfaceKeyColorAtPosition"/>)
+    /// and <see cref="ColourGenerator.IsGreenKeyColor"/>. Water is NOT decided here (the caller knows the
+    /// player's wade/swim state); this only distinguishes Grass / Sand / Snow / Rock. Cheap enough to call
+    /// once per footstep. Returns <see cref="FootstepSurfaceKind.Default"/> if the planet isn't coloured yet.
+    /// </summary>
+    public FootstepSurfaceKind GetFootstepSurface(Vector3 worldPosition)
+    {
+        if (colourSettings == null || colourGenerator == null)
+            return FootstepSurfaceKind.Default;
+
+        Color k = GetSurfaceKeyColorAtPosition(worldPosition);
+
+        // Green keys are the authoritative "grass" shades (excludes tan/brown by construction).
+        if (ColourGenerator.IsGreenKeyColor(k))
+            return FootstepSurfaceKind.Grass;
+
+        Color.RGBToHSV(k, out float hue, out float sat, out float val);
+
+        // Whitish + bright + low saturation = snow.
+        if (val > 0.72f && sat < 0.20f)
+            return FootstepSurfaceKind.Snow;
+
+        // Warm yellow/tan hue (~30-65 deg => 0.083-0.18) with some saturation and brightness = sand/beach.
+        if (hue >= 0.07f && hue <= 0.19f && sat > 0.22f && val > 0.45f)
+            return FootstepSurfaceKind.Sand;
+
+        // Everything else (grey/brown/dark, high-slope rock) = rock/dirt.
+        return FootstepSurfaceKind.Rock;
+    }
+
+    /// <summary>
     /// Biome blend value at a position: 0 = first biome (grass), increasing toward 1 for later
     /// biomes (desert/snow). Latitude+noise based — matches how the surface picks its biome.
     /// </summary>
@@ -466,14 +397,6 @@ public class Planet : MonoBehaviour
     {
         float scale = Mathf.Max(transform.lossyScale.x, transform.lossyScale.y, transform.lossyScale.z);
         return (shapeSettings != null ? shapeSettings.planetRadius : 100f) * scale;
-    }
-
-    /// <summary>Water surface radius in world space. Returns 0 if water is disabled. Positions with distance from planet center less than this are "in water".</summary>
-    public float GetWaterRadiusWorld()
-    {
-        if (colourSettings == null || !colourSettings.useWater)
-            return 0f;
-        return GetBaseRadiusWorld() * (1f + colourSettings.waterRadiusOffset);
     }
 
     /// <summary>Max world-space distance from center to terrain (for spawn above surface).</summary>
@@ -528,6 +451,103 @@ public class Planet : MonoBehaviour
         }
 
         return false;
+    }
+
+    /// <summary>Uniform world scale of the planet (max lossy scale axis), matching how every other lookup
+    /// here converts between local mesh units and world space. Guarded to never be ~0.</summary>
+    float ScaleFactor()
+    {
+        float scale = Mathf.Max(transform.lossyScale.x, transform.lossyScale.y, transform.lossyScale.z);
+        return (scale < 1e-6f) ? 1f : scale;
+    }
+
+    /// <summary>
+    /// ANALYTIC surface radius (world-space distance from planet center to the terrain surface) along a
+    /// direction from the center. This is the deterministic equivalent of raycasting the planet mesh inward:
+    /// the surface is <c>shapeGenerator.CalculatePointOnPlanet(dir)</c>, whose magnitude is the local radius,
+    /// scaled into world space. No physics query, no per-attempt allocation, and (unlike CalculatePointOnPlanet)
+    /// no mutation of elevationMinMax. Because the mesh collider is built from the SAME function (at
+    /// resolution-50 tessellation), this matches the collider surface to within the tessellation error — which
+    /// is well under a typical foliage surfaceOffset, so foliage seats correctly without floating/sinking.
+    /// Rotation is intentionally ignored to stay consistent with the colour/elevation lookups in this class,
+    /// which all treat the world direction from center as the unit-sphere sample point.
+    /// </summary>
+    public float GetSurfaceRadiusWorld(Vector3 directionFromCenter)
+    {
+        Vector3 dir = directionFromCenter.normalized;
+        if (dir.sqrMagnitude < 1e-12f)
+            return GetBaseRadiusWorld();
+        if (shapeGenerator == null)
+            return GetBaseRadiusWorld();
+        float localRadius = shapeGenerator.CalculateUnscaledElevation(dir);
+        return localRadius * ScaleFactor();
+    }
+
+    /// <summary>Analytic world-space surface point along a direction from the planet center (see
+    /// <see cref="GetSurfaceRadiusWorld"/>). Drop-in replacement for a raycast hit point in foliage placement.</summary>
+    public Vector3 GetSurfacePointWorld(Vector3 directionFromCenter)
+    {
+        Vector3 dir = directionFromCenter.normalized;
+        if (dir.sqrMagnitude < 1e-12f)
+            dir = Vector3.up;
+        return transform.position + dir * GetSurfaceRadiusWorld(dir);
+    }
+
+    /// <summary>
+    /// Analytic outward surface normal at the surface point along <paramref name="directionFromCenter"/>,
+    /// computed from the gradient of the radial heightfield via two small tangential finite differences.
+    /// Replaces the raycast hit normal: foliage uses it for slope rejection and surface orientation. It is the
+    /// "true" continuous surface normal, so it can differ slightly from the coarse tessellated mesh normal — an
+    /// acceptable (and arguably more accurate) difference for foliage. Falls back to the radial (straight-up)
+    /// normal if the planet isn't generated yet.
+    /// </summary>
+    public Vector3 GetSurfaceNormalWorld(Vector3 directionFromCenter)
+    {
+        Vector3 dir = directionFromCenter.normalized;
+        if (dir.sqrMagnitude < 1e-12f || shapeGenerator == null)
+            return (dir.sqrMagnitude < 1e-12f) ? Vector3.up : dir;
+
+        // Build an arbitrary tangent basis around the radial direction.
+        Vector3 t1 = Vector3.Cross(dir, Vector3.up);
+        if (t1.sqrMagnitude < 1e-6f)
+            t1 = Vector3.Cross(dir, Vector3.right);
+        t1.Normalize();
+        Vector3 t2 = Vector3.Cross(dir, t1); // already unit length
+
+        // Angular step roughly matching the mesh's per-quad angular size (resolution ~50 -> ~2 deg), so the
+        // analytic normal tracks terrain slope at a similar scale to the old mesh-hit normal.
+        const float eps = 0.02f;
+        Vector3 center = transform.position;
+        Vector3 p0 = center + dir * GetSurfaceRadiusWorld(dir);
+        Vector3 da = (dir + t1 * eps).normalized;
+        Vector3 db = (dir + t2 * eps).normalized;
+        Vector3 pa = center + da * GetSurfaceRadiusWorld(da);
+        Vector3 pb = center + db * GetSurfaceRadiusWorld(db);
+
+        Vector3 n = Vector3.Cross(pa - p0, pb - p0);
+        if (n.sqrMagnitude < 1e-12f)
+            return dir;
+        n.Normalize();
+        if (Vector3.Dot(n, dir) < 0f)
+            n = -n; // ensure it points outward (away from center)
+        return n;
+    }
+
+    /// <summary>
+    /// LOCAL (unscaled) elevation min/max spanned by the generated surface — the same range
+    /// <see cref="GetNormalizedElevationAtPosition"/> normalizes against. Foliage's Burst sampler needs
+    /// both ends to reproduce normalized elevation off the main thread. Returns false until the mesh has
+    /// generated (elevationMinMax is populated by GenerateMesh).
+    /// </summary>
+    public bool TryGetLocalElevationMinMax(out float min, out float max)
+    {
+        min = 0f;
+        max = 0f;
+        if (shapeGenerator == null || shapeGenerator.elevationMinMax == null)
+            return false;
+        min = shapeGenerator.elevationMinMax.Min;
+        max = shapeGenerator.elevationMinMax.Max;
+        return true;
     }
 
     /// <summary>Normalized elevation (0=lowest, 1=highest) at a world position. For elevation-based spawn filtering.</summary>

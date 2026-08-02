@@ -141,6 +141,8 @@ public sealed class StargraveGameHud : MonoBehaviour
 
         if (_health != null && _healthFill != null)
         {
+            if (_healthFill.sprite == null)
+                _healthFill.sprite = UiWhiteSprite();
             float t = _health.maxHealth > 0 ? (float)_health.CurrentHealth / _health.maxHealth : 0f;
             _healthFill.fillAmount = Mathf.Clamp01(t);
         }
@@ -380,6 +382,8 @@ public sealed class StargraveGameHud : MonoBehaviour
 
     static Image CreateBar(Transform parent, string name, Vector2 anchoredPos, Vector2 size)
     {
+        Sprite white = UiWhiteSprite();
+
         var bg = new GameObject(name + "_Bg", typeof(RectTransform));
         bg.transform.SetParent(parent, false);
         var bgRt = bg.GetComponent<RectTransform>();
@@ -389,6 +393,7 @@ public sealed class StargraveGameHud : MonoBehaviour
         bgRt.anchoredPosition = anchoredPos;
         bgRt.sizeDelta = size;
         var bgImg = bg.AddComponent<Image>();
+        bgImg.sprite = white;
         bgImg.color = new Color(0.1f, 0.11f, 0.14f, 0.85f);
 
         var fill = new GameObject(name + "_Fill", typeof(RectTransform));
@@ -399,12 +404,19 @@ public sealed class StargraveGameHud : MonoBehaviour
         fillRt.offsetMin = new Vector2(3f, 3f);
         fillRt.offsetMax = new Vector2(-3f, -3f);
         var fillImg = fill.AddComponent<Image>();
+        fillImg.sprite = white;
         fillImg.color = new Color(0.55f, 0.2f, 0.22f, 0.95f);
         fillImg.type = Image.Type.Filled;
         fillImg.fillMethod = Image.FillMethod.Horizontal;
         fillImg.fillOrigin = (int)Image.OriginHorizontal.Left;
         fillImg.fillAmount = 1f;
         return fillImg;
+    }
+
+    static Sprite UiWhiteSprite()
+    {
+        // Filled Images need a sprite; without one, fillAmount does nothing visually.
+        return Sprite.Create(Texture2D.whiteTexture, new Rect(0f, 0f, 1f, 1f), new Vector2(0.5f, 0.5f), 100f);
     }
 
     static Text CreateLabel(Transform parent, string name, Vector2 anchoredPos, Vector2 size, Font font, int fontSize)

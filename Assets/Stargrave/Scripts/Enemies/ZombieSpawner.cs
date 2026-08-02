@@ -1,15 +1,33 @@
 using System.Collections;
+using System.Collections.Generic;
 using UnityEngine;
 
 /// <summary>
+/// One weighted zombie prefab entry for multi-type spawning.
+/// </summary>
+[System.Serializable]
+public class ZombieSpawnVariant
+{
+    public string name;
+    public GameObject prefab;
+    [Tooltip("Relative spawn chance. Higher = more common.")]
+    [Min(0f)] public float weight = 1f;
+}
+
+/// <summary>
 /// Stargrave 1.3-style population + dry-surface spawn (with <see cref="PlanetSurfaceSampler"/>).
-/// Keeps your zombie prefab; assign one with <see cref="ZombieAI"/> + Rigidbody (and GravityBody if you use planet gravity).
+/// Supports multiple zombie types via <see cref="variants"/> (weighted); falls back to <see cref="zombiePrefab"/>.
 /// </summary>
 public class ZombieSpawner : MonoBehaviour
 {
     public static ZombieSpawner Instance { get; private set; }
 
+    [Tooltip("Legacy single prefab. Used when Variants is empty, and as a fallback entry.")]
     public GameObject zombiePrefab;
+
+    [Header("Zombie types")]
+    [Tooltip("Weighted list of zombie prefabs (different speeds/health/looks). Empty = use Zombie Prefab only.")]
+    public List<ZombieSpawnVariant> variants = new List<ZombieSpawnVariant>();
 
     public int SteadyPopulationTarget => Mathf.Clamp(zombieCount, 0, Mathf.Max(1, maxAliveZombies));
 
@@ -29,8 +47,10 @@ public class ZombieSpawner : MonoBehaviour
     [Range(0f, 80f)] public float oppositeSpawnConeAngleDegrees = 22f;
     [Min(0f)] public float respawnDelaySeconds = 2f;
     [Min(1)]
-    [Tooltip("How many zombies spawn after each kill.")]
-    public int respawnsPerKill = 2;
+    [Tooltip("How many zombies spawn after each kill. 1 = replace the killed one on the opposite side.")]
+    public int respawnsPerKill = 1;
+    [Tooltip("Extra world units above sea level required for a valid spawn (keeps feet dry).")]
+    [Min(0f)] public float spawnDryClearance = 0.75f;
     [Min(1f)] public float spawnDistanceFromPlayer = 26f;
     [Range(1f, 90f)] public float spawnConeAngleDegrees = 40f;
     [Min(1)]
@@ -40,7 +60,6 @@ public class ZombieSpawner : MonoBehaviour
     [Tooltip("Spawn position offset along surface normal (same idea as old heightAboveSurface).")]
     public float heightAboveSurface = 1f;
     public float fallbackShellRadius = 52f;
-    public float underwaterEpsilon = -0.25f;
 
     [Header("Planet (optional override)")]
     public Transform planet;
@@ -55,8 +74,8 @@ public class ZombieSpawner : MonoBehaviour
 
     Transform _cachedPlanet;
     MeshCollider _cachedPlanetCollider;
-    PlanetWaterLayer _cachedWaterLayer;
     Planet _cachedPlanetComp;
+    PlanetOceanLayer _cachedOcean;
     float _nextPlanetCacheTime;
     bool _initialSpawnComplete;
     int _zombieLayer = -1;
@@ -80,9 +99,9 @@ public class ZombieSpawner : MonoBehaviour
     void Start()
     {
         _zombieLayer = LayerMask.NameToLayer(zombieLayerName);
-        if (zombiePrefab == null)
+        if (PickPrefab() == null)
         {
-            Debug.LogWarning("ZombieSpawner: zombiePrefab is not assigned.");
+            Debug.LogWarning("ZombieSpawner: no zombie prefab / variants assigned.");
             _initialSpawnComplete = true;
             return;
         }
@@ -90,6 +109,38 @@ public class ZombieSpawner : MonoBehaviour
         _initialSpawnComplete = false;
         StartCoroutine(InitialSpawnBurstWhenPlanetReady());
         StartCoroutine(MaintainPopulationLoop());
+    }
+
+    /// <summary>Weighted pick from variants, else zombiePrefab.</summary>
+    public GameObject PickPrefab()
+    {
+        float total = 0f;
+        if (variants != null)
+        {
+            for (int i = 0; i < variants.Count; i++)
+            {
+                var v = variants[i];
+                if (v != null && v.prefab != null && v.weight > 0f)
+                    total += v.weight;
+            }
+        }
+
+        if (total > 0f)
+        {
+            float r = Random.Range(0f, total);
+            float acc = 0f;
+            for (int i = 0; i < variants.Count; i++)
+            {
+                var v = variants[i];
+                if (v == null || v.prefab == null || v.weight <= 0f)
+                    continue;
+                acc += v.weight;
+                if (r <= acc)
+                    return v.prefab;
+            }
+        }
+
+        return zombiePrefab;
     }
 
     /// <summary>Clears all zombies and re-runs the initial burst (e.g. after game over without scene reload).</summary>
@@ -151,8 +202,11 @@ public class ZombieSpawner : MonoBehaviour
         int target = Mathf.Clamp(zombieCount, 0, Mathf.Max(1, maxAliveZombies));
         for (int i = 0; i < target; i++)
         {
+            GameObject prefab = PickPrefab();
+            if (prefab == null)
+                break;
             Vector3 preferredDirection = initialSpawnGlobal ? Random.onUnitSphere : GetSpawnDirectionNearPlayer(GetPlanetCenter());
-            TrySpawnOne(zombiePrefab, preferredDirection, maxAttempts);
+            TrySpawnOne(prefab, preferredDirection, maxAttempts);
             yield return null;
         }
 
@@ -168,17 +222,20 @@ public class ZombieSpawner : MonoBehaviour
         int steadyTarget = Mathf.Clamp(zombieCount, 0, Mathf.Max(1, maxAliveZombies));
         while (isActiveAndEnabled)
         {
-            if (zombiePrefab != null)
+            if (PickPrefab() != null)
             {
                 int alive = ZombieAI.LivingCount;
                 int needed = Mathf.Max(0, steadyTarget - alive);
                 int spawnThisTick = Mathf.Min(needed, maxSpawnsPerMaintainTick);
                 for (int i = 0; i < spawnThisTick; i++)
                 {
+                    GameObject prefab = PickPrefab();
+                    if (prefab == null)
+                        break;
                     Vector3 preferredDirection = topUpOppositePlayer
                         ? GetSpawnDirectionOppositePlayer(GetPlanetCenter())
                         : GetSpawnDirectionNearPlayer(GetPlanetCenter());
-                    TrySpawnOne(zombiePrefab, preferredDirection, maintainSpawnAttempts);
+                    TrySpawnOne(prefab, preferredDirection, maintainSpawnAttempts);
                     yield return null;
                 }
             }
@@ -186,13 +243,15 @@ public class ZombieSpawner : MonoBehaviour
         }
     }
 
+    /// <summary>
+    /// Called when a zombie dies. Schedules respawn; the corpse handles its own fall/sink despawn.
+    /// </summary>
     public void OnZombieKilled(ZombieAI zombie)
     {
         if (!isActiveAndEnabled || zombie == null)
             return;
 
-        GameObject prefabToSpawn = zombiePrefab;
-        Destroy(zombie.gameObject);
+        GameObject prefabToSpawn = PickPrefab();
 
         if (respawnOnKill && prefabToSpawn != null)
             StartCoroutine(RespawnAfterDelay(prefabToSpawn, Mathf.Max(0f, respawnDelaySeconds), Mathf.Max(1, respawnsPerKill)));
@@ -208,10 +267,9 @@ public class ZombieSpawner : MonoBehaviour
         {
             if (ZombieAI.LivingCount >= maxAliveZombies)
                 yield break;
-            Vector3 preferredDirection = topUpOppositePlayer
-                ? GetSpawnDirectionOppositePlayer(GetPlanetCenter())
-                : GetSpawnDirectionNearPlayer(GetPlanetCenter());
-            TrySpawnOne(prefab, preferredDirection, maintainSpawnAttempts);
+            // Kill respawns always go to the opposite hemisphere on dry land (or nearest dry land there).
+            Vector3 preferredDirection = GetSpawnDirectionOppositePlayer(GetPlanetCenter());
+            TrySpawnOne(prefab, preferredDirection, Mathf.Max(maintainSpawnAttempts, 24));
             yield return null;
         }
     }
@@ -230,14 +288,16 @@ public class ZombieSpawner : MonoBehaviour
         if (_cachedPlanet == null)
         {
             _cachedPlanetCollider = null;
-            _cachedWaterLayer = null;
             _cachedPlanetComp = null;
+            _cachedOcean = null;
             return;
         }
 
         _cachedPlanetComp = _cachedPlanet.GetComponent<Planet>();
+        _cachedOcean = _cachedPlanet.GetComponent<PlanetOceanLayer>();
+        if (_cachedOcean == null)
+            _cachedOcean = Object.FindAnyObjectByType<PlanetOceanLayer>();
         _cachedPlanetCollider = ZombieAI.ResolvePrimaryTerrainMeshCollider(_cachedPlanet);
-        _cachedWaterLayer = _cachedPlanet.GetComponentInChildren<PlanetWaterLayer>(true);
     }
 
     void TrySpawnOne(GameObject prefab, Vector3 preferredDirection, int raycastAttempts)
@@ -258,13 +318,13 @@ public class ZombieSpawner : MonoBehaviour
             preferredDirection,
             center,
             _cachedPlanetCollider,
-            _cachedWaterLayer,
             _cachedPlanetComp,
+            _cachedOcean,
             groundMask,
             Mathf.Max(1, raycastAttempts),
             heightAboveSurface,
             fallbackShellRadius,
-            underwaterEpsilon);
+            spawnDryClearance);
 
         Quaternion rot = Quaternion.identity;
         Vector3 up = (spawnPos - center).normalized;
@@ -275,6 +335,12 @@ public class ZombieSpawner : MonoBehaviour
         z.name = prefab.name + "_" + Random.Range(1000, 99999);
         if (_zombieLayer >= 0)
             z.layer = _zombieLayer;
+
+        // Render-only view culling (same in-view + small border rule as the foliage system): cull RENDERING
+        // when off-screen while AI keeps running. Added here so it works even for an existing prefab that
+        // predates ZombieSetup adding the component. DisallowMultipleComponent => guard against double-add.
+        if (z.GetComponent<ZombieVisibilityCuller>() == null)
+            z.AddComponent<ZombieVisibilityCuller>();
     }
 
     Vector3 GetPlanetCenter()

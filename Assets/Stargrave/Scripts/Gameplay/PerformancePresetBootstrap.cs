@@ -61,7 +61,6 @@ public static class PerformancePresetBootstrap
             z.maxFullAiEnemiesNearPlayer = quality ? 120 : (balanced ? 90 : 70);
             z.fullAiNearDistance = quality ? 36f : (balanced ? 32f : 28f);
             z.surfaceStickRaycastPeriod = quality ? 2 : (balanced ? 2 : 3);
-            z.landSeekProbeRefreshSeconds = quality ? 0.5f : (balanced ? 0.65f : 0.85f);
             z.cheapIdleSpeedMultiplier = quality ? 0.45f : (balanced ? 0.4f : 0.34f);
         }
     }

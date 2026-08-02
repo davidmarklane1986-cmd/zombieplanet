@@ -9,12 +9,9 @@ Shader "ProceduralPlanets/Planet Colour With Biomes"
         _DetailTex ("Detail Texture", 2D) = "white" {}
         _DetailTiling ("Detail Tiling (X Z)", Vector) = (4, 4, 0, 0)
         _DetailStrength ("Detail Strength", Range(0, 1)) = 0
-        [Header(Shadows)]
-        _ShadowMin ("Shadow Min Brightness", Range(0, 1)) = 0.4
-        _ShadowFadeStrength ("Shadow Fade At Distance", Range(0, 1)) = 0.5
-        _ShadowHardness ("Shadow Hardness", Range(0, 1)) = 0
-        _NightDarkness ("Night Side Darkness", Range(0, 1)) = 0.03
-        _TerminatorSoftness ("Terminator Softness (match atmosphere)", Range(0.01, 0.6)) = 0.35
+        [Header(Stochastic Texturing)]
+        [Toggle] _UseStochastic ("Use Stochastic Texturing", Float) = 1
+        _StochasticContrast ("Stochastic Blend Contrast", Range(1, 8)) = 4
         [Header(Biome boundaries)]
         _BiomeBoundaryBlur ("Texture Boundary Blur (fade width)", Range(0, 0.15)) = 0.03
         _BiomeOverlapWidth ("Texture Overlap Width (blend band)", Range(0.05, 0.5)) = 0.25
@@ -34,11 +31,17 @@ Shader "ProceduralPlanets/Planet Colour With Biomes"
             #pragma fragment frag
             #pragma multi_compile _ _MAIN_LIGHT_SHADOWS _MAIN_LIGHT_SHADOWS_CASCADE
             #pragma multi_compile _ _SHADOWS_SOFT
+            #pragma multi_compile _ _ADDITIONAL_LIGHTS_VERTEX _ADDITIONAL_LIGHTS
+            #pragma multi_compile _ _FORWARD_PLUS
+            #pragma multi_compile_fragment _ _ADDITIONAL_LIGHT_SHADOWS
+            #pragma multi_compile_fog
 
             #include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/Core.hlsl"
             #include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/Shadows.hlsl"
             #include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/Lighting.hlsl"
             #include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/RealtimeLights.hlsl"
+            #include "StochasticSampling.hlsl"
+            #include "Assets/Stargrave/Shaders/Water/StargraveAdditionalLights.hlsl"
 
             float4 _elevationMinMax;
             float4 _TextureTiling;
@@ -47,14 +50,11 @@ Shader "ProceduralPlanets/Planet Colour With Biomes"
             float _MaxGradientKeys;
             float _UseGradientKeyTextures;
             float _DetailStrength;
-            float _ShadowMin;
-            float _ShadowFadeStrength;
-            float _ShadowHardness;
-            float _NightDarkness;
-            float _TerminatorSoftness;
             float _UseBiomeLookup;
             float _BiomeBoundaryBlur;
             float _BiomeOverlapWidth;
+            float _UseStochastic;
+            float _StochasticContrast;
             TEXTURE2D(_texture);
             SAMPLER(sampler_texture);
             TEXTURE2D(_BiomeLookup);
@@ -166,42 +166,47 @@ Shader "ProceduralPlanets/Planet Colour With Biomes"
                     slice0 = clamp(biomeIndex0, 0, (int)_BiomeCount - 1);
                     slice1 = clamp(biomeIndex1, 0, (int)_BiomeCount - 1);
                 }
-                float2 tiledUV = frac(sphericalUV * _TextureTiling.xy);
-                half3 biomeTex0 = SAMPLE_TEXTURE2D_ARRAY(_BiomeTextures, sampler_BiomeTextures, tiledUV, slice0).rgb;
-                half3 biomeTex1 = SAMPLE_TEXTURE2D_ARRAY(_BiomeTextures, sampler_BiomeTextures, tiledUV, slice1).rgb;
+                // Continuous UVs (no frac) so stochastic offsets wrap via the sampler.
+                float2 tiledUV = sphericalUV * _TextureTiling.xy;
+                float stochContrast = max(_StochasticContrast, 1.0);
+                half3 biomeTex0, biomeTex1;
+                if (_UseStochastic >= 0.5)
+                {
+                    biomeTex0 = SampleStochastic2DArray(TEXTURE2D_ARRAY_ARGS(_BiomeTextures, sampler_BiomeTextures), tiledUV, slice0, stochContrast);
+                    biomeTex1 = SampleStochastic2DArray(TEXTURE2D_ARRAY_ARGS(_BiomeTextures, sampler_BiomeTextures), tiledUV, slice1, stochContrast);
+                }
+                else
+                {
+                    biomeTex0 = SAMPLE_TEXTURE2D_ARRAY(_BiomeTextures, sampler_BiomeTextures, tiledUV, slice0).rgb;
+                    biomeTex1 = SAMPLE_TEXTURE2D_ARRAY(_BiomeTextures, sampler_BiomeTextures, tiledUV, slice1).rgb;
+                }
                 half3 biomeTex = lerp(biomeTex0, biomeTex1, blend);
                 col = col * biomeTex;
 
-                float2 detailUV = frac(sphericalUV * _DetailTiling.xy);
-                half3 detail = SAMPLE_TEXTURE2D(_DetailTex, sampler_DetailTex, detailUV).rgb;
+                float2 detailUV = sphericalUV * _DetailTiling.xy;
+                half3 detail = (_UseStochastic >= 0.5 && _DetailStrength > 1e-4)
+                    ? SampleStochastic2D(TEXTURE2D_ARGS(_DetailTex, sampler_DetailTex), detailUV, stochContrast)
+                    : SAMPLE_TEXTURE2D(_DetailTex, sampler_DetailTex, detailUV).rgb;
                 col = lerp(col, col * detail, _DetailStrength);
 
-                // --- URP day/night lighting: bright, even daytime (original look); night falls to _NightDarkness ---
-                // 'col' so far is the biome albedo (unchanged).
+                // --- Natural URP lighting ---
+                // 'col' so far is the procedural biome albedo (unchanged). It is now lit by the real main
+                // directional light (the sun) plus environment ambient, exactly like a URP/Lit surface, so
+                // the day/night terminator falls out of N.L against the sun direction (shared by the ocean
+                // and atmosphere) instead of a hand-authored darkening curve. The night side falls dark
+                // naturally, with SampleSH(N) providing a small ambient floor so it is never pure black.
                 float4 shadowCoord = TransformWorldToShadowCoord(i.positionWS);
                 Light mainLight = GetMainLight(shadowCoord);
                 float3 N = normalize(i.normalWS);
-                half NdotL = dot(N, mainLight.direction);
+                half NdotL = saturate(dot(N, mainLight.direction));
 
-                // Day/night terminator. The night hemisphere (N.L <= 0, including the terminator itself) is
-                // fully dark at _NightDarkness, exactly like the approved night look. The day side then ramps
-                // smoothly up to full albedo across the lit limb over a band of width _TerminatorSoftness, so
-                // the dark edge sits right at the geometric terminator and still reads as one with the
-                // atmosphere's limb glow (which lingers over the now-dark night ground near the terminator).
-                half f = smoothstep(0.0, _TerminatorSoftness, NdotL);
-
-                // Cast-shadow softening still driven by the existing material knobs.
-                half shadowAtten = mainLight.shadowAttenuation;
-                half sharpen = 1.0 + _ShadowHardness * 4.0;
-                shadowAtten = saturate((shadowAtten - 0.5) * sharpen + 0.5);
-                half shadowFactor = lerp(_ShadowMin, 1.0, shadowAtten);
-                half shadowFade = GetMainLightShadowFade(i.positionWS) * _ShadowFadeStrength;
-                shadowFactor = lerp(shadowFactor, 1.0, shadowFade);
-
-                // Bounded day/night in [_NightDarkness .. 1]: the fully lit side reproduces the original
-                // albedo exactly (no intensity-2 blow-out, no light-colour tint); night side == _NightDarkness.
-                half dayNight = lerp(_NightDarkness, 1.0, f * shadowFactor);
-                col *= dayNight;
+                half3 diffuse = col * mainLight.color * NdotL * mainLight.shadowAttenuation;
+                half3 ambient = col * SampleSH(N);
+                half3 additional = StargraveApplyAdditionalLights(
+                    i.positionWS, N, GetNormalizedScreenSpaceUV(i.positionCS), col);
+                col = diffuse + ambient + additional;
+                half fogFactor = InitializeInputDataFog(float4(i.positionWS, 1.0), 0);
+                col = MixFog(col, fogFactor);
 
                 return half4(col, 1);
             }

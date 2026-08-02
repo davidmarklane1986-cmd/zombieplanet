@@ -25,7 +25,8 @@ Material:
   m_Parent: {fileID: 0}
   m_ModifiedSerializedProperties: 0
   m_ValidKeywords: []
-  m_InvalidKeywords: []
+  m_InvalidKeywords:
+  - _USESTOCHASTIC_ON
   m_LightmapFlags: 4
   m_EnableInstancingVariants: 0
   m_DoubleSidedGI: 0
@@ -117,7 +118,7 @@ Material:
     - _Glossiness: 0.5
     - _GlossyReflections: 1
     - _Metallic: 0
-    - _NightDarkness: 0.03
+    - _NightDarkness: 0.22
     - _OcclusionStrength: 1
     - _Parallax: 0.02
     - _QueueControl: 0
@@ -128,9 +129,11 @@ Material:
     - _SmoothnessTextureChannel: 0
     - _SpecularHighlights: 1
     - _SrcBlend: 1
+    - _StochasticContrast: 4
     - _Surface: 0
-    - _TerminatorSoftness: 0.35
+    - _TerminatorSoftness: 0.2
     - _UVSec: 0
+    - _UseStochastic: 1
     - _WorkflowMode: 1
     - _ZWrite: 1
     m_Colors:

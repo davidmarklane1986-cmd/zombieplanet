@@ -13,7 +13,10 @@ public class CharacterAlign : MonoBehaviour
 
     [Tooltip("Adjust how high the model appears. Negative = lower, positive = raise. Physics unchanged.")]
     [Range(-2f, 2f)]
-    public float modelHeightOffset = -1f;
+    public float modelHeightOffset = 0f;
+
+    [Tooltip("Extra local Euler degrees applied to the model (Kenny FBX often needs pitch ±90).")]
+    public Vector3 modelEulerOffset = Vector3.zero;
 
     [Tooltip("Rotate the model this many degrees around Y (from above). 0 = forward, 180 = face backward (e.g. player toward camera).")]
     [Range(-180f, 180f)]
@@ -55,9 +58,10 @@ public class CharacterAlign : MonoBehaviour
         int dir = _cap.direction;
         Vector3 axis = dir == 0 ? Vector3.right : (dir == 1 ? Vector3.up : Vector3.forward);
         float halfH = _cap.height * 0.5f;
+        // Position/rotation only — never touch localScale (Kenny FBX fits depend on a non-1 scale
+        // to cancel the embedded 100× export; resetting to 1 makes zombies planet-sized).
         model.localPosition = _cap.center - axis * halfH + axis * modelHeightOffset;
-        model.localRotation = Quaternion.Euler(0f, rotationOffsetDegrees, 0f);
-        model.localScale = Vector3.one;
+        model.localRotation = Quaternion.Euler(modelEulerOffset) * Quaternion.Euler(0f, rotationOffsetDegrees, 0f);
 
         foreach (var col in model.GetComponentsInChildren<Collider>(true))
         {
@@ -90,6 +94,6 @@ public class CharacterAlign : MonoBehaviour
         Vector3 ax = d == 0 ? Vector3.right : (d == 1 ? Vector3.up : Vector3.forward);
         float half = _cap.height * 0.5f;
         model.localPosition = _cap.center - ax * half + ax * modelHeightOffset;
-        model.localRotation = Quaternion.Euler(0f, rotationOffsetDegrees, 0f);
+        model.localRotation = Quaternion.Euler(modelEulerOffset) * Quaternion.Euler(0f, rotationOffsetDegrees, 0f);
     }
 }

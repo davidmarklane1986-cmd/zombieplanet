@@ -69,6 +69,47 @@ public class ColourGenerator
         return false;
     }
 
+    void FillLayerFromTexture(Texture2D src, Color[] layerPixels)
+    {
+        if (src == null)
+        {
+            for (int i = 0; i < layerPixels.Length; i++)
+                layerPixels[i] = Color.white;
+            return;
+        }
+
+        if (src.isReadable)
+        {
+            for (int y = 0; y < biomeTextureSize; y++)
+                for (int x = 0; x < biomeTextureSize; x++)
+                    layerPixels[y * biomeTextureSize + x] = src.GetPixelBilinear(
+                        (float)x / (biomeTextureSize - 1),
+                        (float)y / (biomeTextureSize - 1));
+            return;
+        }
+
+        // Non-readable GPU textures (common default): blit into a temporary readable copy.
+        RenderTexture rt = RenderTexture.GetTemporary(biomeTextureSize, biomeTextureSize, 0, RenderTextureFormat.ARGB32);
+        RenderTexture prev = RenderTexture.active;
+        Graphics.Blit(src, rt);
+        RenderTexture.active = rt;
+        var readable = new Texture2D(biomeTextureSize, biomeTextureSize, TextureFormat.RGBA32, false, false);
+        readable.ReadPixels(new Rect(0, 0, biomeTextureSize, biomeTextureSize), 0, 0);
+        readable.Apply(false, false);
+        RenderTexture.active = prev;
+        RenderTexture.ReleaseTemporary(rt);
+
+        Color[] pixels = readable.GetPixels();
+        if (pixels != null && pixels.Length == layerPixels.Length)
+            System.Array.Copy(pixels, layerPixels, layerPixels.Length);
+        else
+        {
+            for (int i = 0; i < layerPixels.Length; i++)
+                layerPixels[i] = Color.white;
+        }
+        Object.DestroyImmediate(readable);
+    }
+
     void BuildBiomeTextureArray()
     {
         var biomes = settings.biomeColourSettings.biomes;
@@ -125,21 +166,13 @@ public class ColourGenerator
                 for (int k = 0; k < maxGradientKeys; k++)
                 {
                     Texture2D src = (perKey != null && k < perKey.Count && perKey[k] != null) ? perKey[k] : fallback;
-                    if (src != null && src.isReadable)
-                    {
-                        for (int y = 0; y < biomeTextureSize; y++)
-                            for (int x = 0; x < biomeTextureSize; x++)
-                                layerPixels[y * biomeTextureSize + x] = src.GetPixelBilinear((float)x / (biomeTextureSize - 1), (float)y / (biomeTextureSize - 1));
-                    }
-                    else
-                    {
-                        for (int i = 0; i < layerPixels.Length; i++)
-                            layerPixels[i] = Color.white;
-                    }
+                    FillLayerFromTexture(src, layerPixels);
                     biomeTextureArray.SetPixels(layerPixels, b * maxGradientKeys + k);
                 }
             }
             biomeTextureArray.Apply();
+            biomeTextureArray.wrapMode = TextureWrapMode.Repeat;
+            biomeTextureArray.filterMode = FilterMode.Bilinear;
         }
         else
         {
@@ -149,21 +182,12 @@ public class ColourGenerator
             Color[] layerPixels = new Color[biomeTextureSize * biomeTextureSize];
             for (int b = 0; b < biomes.Length; b++)
             {
-                Texture2D src = biomes[b].terrainTexture;
-                if (src != null && src.isReadable)
-                {
-                    for (int y = 0; y < biomeTextureSize; y++)
-                        for (int x = 0; x < biomeTextureSize; x++)
-                            layerPixels[y * biomeTextureSize + x] = src.GetPixelBilinear((float)x / (biomeTextureSize - 1), (float)y / (biomeTextureSize - 1));
-                }
-                else
-                {
-                    for (int i = 0; i < layerPixels.Length; i++)
-                        layerPixels[i] = Color.white;
-                }
+                FillLayerFromTexture(biomes[b].terrainTexture, layerPixels);
                 biomeTextureArray.SetPixels(layerPixels, b);
             }
             biomeTextureArray.Apply();
+            biomeTextureArray.wrapMode = TextureWrapMode.Repeat;
+            biomeTextureArray.filterMode = FilterMode.Bilinear;
         }
     }
 
@@ -275,10 +299,14 @@ public class ColourGenerator
             settings.planetMaterial.SetTexture("_KeyPositions", keyPositionsTexture != null ? keyPositionsTexture : Texture2D.whiteTexture);
             settings.planetMaterial.SetFloat("_BiomeBoundaryBlur", settings.biomeColourSettings.textureBoundaryBlur);
             settings.planetMaterial.SetFloat("_BiomeOverlapWidth", settings.biomeColourSettings.textureOverlapWidth);
+            settings.planetMaterial.SetFloat("_UseStochastic", settings.biomeColourSettings.useStochasticTexturing ? 1f : 0f);
+            settings.planetMaterial.SetFloat("_StochasticContrast", settings.biomeColourSettings.stochasticContrast);
         }
         else if (baseShader != null)
         {
             settings.planetMaterial.shader = baseShader;
+            settings.planetMaterial.SetFloat("_UseStochastic", settings.biomeColourSettings.useStochasticTexturing ? 1f : 0f);
+            settings.planetMaterial.SetFloat("_StochasticContrast", settings.biomeColourSettings.stochasticContrast);
         }
 
         if (biomeLookupTexture != null)

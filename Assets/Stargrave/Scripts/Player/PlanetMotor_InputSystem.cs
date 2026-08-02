@@ -43,50 +43,67 @@ public class PlanetMotor_InputSystem : MonoBehaviour
     public float groundCheckDistance = 1.1f;
     public LayerMask groundMask = ~0;
 
-    [Header("Swim — PlanetWaterLayer (surface bob + tangent steer, Stargrave 1.3)")]
-    [Tooltip("If set, used instead of auto-find on Planet.")]
-    public PlanetWaterLayer waterLayerOverride;
-    [Tooltip("When a PlanetWaterLayer exists on the planet and water is enabled, uses shoreline hysteresis + radial spring + bob.")]
-    public bool enablePlanetWaterLayerSwim = true;
-    public float swimMoveSpeed = 3.5f;
-    [Tooltip("Capsule center on water shell (half in / half out). Positive = deeper toward core (world units).")]
-    public float swimSurfaceOffset = 0f;
-    public float bobAmplitude = 0.12f;
-    public float bobFrequency = 1.1f;
-    public float swimSurfaceSpring = 16f;
-    public float swimRadialDamping = 5f;
+    [Header("Swimming")]
+    [Tooltip("Master switch for float-on-surface water swimming.")]
+    public bool enableSwimming = true;
+    [Tooltip("Horizontal swim speed (tangent to the ocean sphere) while floating. Replaces walk speed in water.")]
+    public float swimSpeed = 6f;
+    [Tooltip("How deep the player root settles below the ocean surface while floating, in world units. " +
+             "Larger = body sits lower (more submerged). Tune so the water sits around chest/waist.")]
+    public float buoyancyTargetDepth = 0.9f;
+    [Tooltip("Spring stiffness pulling the player toward the float line. Higher = snappier surfacing.")]
+    public float buoyancyStrength = 18f;
+    [Tooltip("Vertical damping (along up) while floating, to stop bobbing forever.")]
+    public float buoyancyDamping = 4f;
+    [Tooltip("General water resistance applied to velocity while swimming, so movement feels heavier than air.")]
+    public float waterDrag = 2.5f;
+    [Tooltip("Root depth (below surface) at which wading turns into floating/swimming. Below this you keep walking.")]
+    public float wadeDepthThreshold = 0.6f;
+    [Tooltip("Root depth at which swimming releases back to walking (hysteresis; should be < wadeDepthThreshold).")]
+    public float swimExitDepth = 0.45f;
+    [Tooltip("Optional dive: vertical speed when holding the dive key (Left Ctrl) while swimming. " +
+             "The buoyancy spring still surfaces you when released, so you can't settle on the seabed.")]
+    public float swimDiveSpeed = 2.5f;
     [Range(0f, 1f)]
-    [Tooltip("Reduces inward gravity from GravityAttractor while surface swimming.")]
-    public float swimGravityScale = 0.12f;
-    [Tooltip("Swim when capsule center is within this distance outside the water shell.")]
-    public float swimZonePadding = 0.55f;
-    [Min(0f)]
-    public float swimZoneExitBuffer = 0.55f;
-    [Tooltip("No capsule: radial offset from water shell for approximate half-body.")]
-    public float swimFootDepthFallback = 0.85f;
-    public float swimSteerAcceleration = 42f;
-    public float swimTangentialDrag = 14f;
+    [Tooltip("How strongly the float line rides the wave height (0 = static sea level, 1 = full bob with the swell).")]
+    public float waveFollowStrength = 1f;
+    [Tooltip("Log swim diagnostics ~2x/sec (ocean found?, ocean radius, distance from centre, depth, swim state). " +
+             "Enable this if swimming isn't engaging and report the numbers.")]
+    public bool debugSwim = false;
 
-    [Header("Swim — legacy (Planet.GetWaterRadiusWorld only, no PlanetWaterLayer)")]
-    [Tooltip("If false, disables ocean swim. When true without PlanetWaterLayer, uses buoyancy below analytical water radius.")]
-    public bool enableSwim = true;
-    public float waterMargin = 0.5f;
-    public float swimBuoyancyAcceleration = 15f;
-    public float swimSinkAcceleration = 0f;
-    [Range(0.15f, 1.25f)]
-    public float swimSpeedMultiplier = 0.75f;
-    [Range(0.15f, 1f)]
-    public float swimMoveControl = 0.85f;
+    [Header("Footsteps")]
+    [Tooltip("Play footstep SFX while grounded and moving. Distance-based, so cadence speeds up automatically when running.")]
+    public bool enableFootsteps = true;
+    [Tooltip("Metres of horizontal travel between footstep sounds. Smaller = faster cadence.")]
+    [Min(0.3f)] public float footstepStrideDistance = 2.1f;
+    [Tooltip("Minimum horizontal speed (m/s) before footsteps trigger (ignores micro-drift).")]
+    [Min(0f)] public float footstepMinSpeed = 0.6f;
+    [Tooltip("Hard floor on the time between footsteps so very high speeds can't machine-gun the sound.")]
+    [Min(0.05f)] public float footstepMinInterval = 0.22f;
+    [Range(0f, 1f)] public float footstepVolume = 0.5f;
+    [Tooltip("Pick the procedural footstep timbre from the surface/area under the player (grass/sand/snow/rock/water). " +
+             "Turn off to always use the generic Kenney footstep clips.")]
+    public bool footstepSurfaceVariation = true;
+    [Tooltip("Submersion depth (world units) at which grounded steps switch to a wet splash. Below this = dry land step.")]
+    [Min(0f)] public float footstepWaterDepth = 0.06f;
+    [Range(0f, 1f)] public float footstepWaterVolume = 0.55f;
+
+    float _distanceSinceStep;
+    float _lastFootstepTime;
 
     Rigidbody rb;
     CapsuleCollider cap;
     Planet _planet;
     Transform _planetCenter;
-    PlanetWaterLayer _waterLayer;
     GravityAttractor _gravityAttractor;
     CombatTargeting _combatTargeting;
+    PlanetOceanLayer _ocean;
+    bool _isSwimming;
+    float _nextSwimLogTime;
 
-    bool _surfaceSwimming;
+    /// <summary>True while the player is floating/swimming in water (rather than walking on land).</summary>
+    public bool IsSwimming => _isSwimming;
+
     bool _lockOnOrbitMoveEngaged;
 
     bool jumpQueued;
@@ -109,7 +126,6 @@ public class PlanetMotor_InputSystem : MonoBehaviour
         rb.collisionDetectionMode = CollisionDetectionMode.Continuous;
 
         ResolvePlanet();
-        ResolveWaterLayer();
         CacheGravityAttractor();
         ApplyJumpFeelPresetIfNeeded();
     }
@@ -171,69 +187,160 @@ public class PlanetMotor_InputSystem : MonoBehaviour
             _planetCenter = _planet.transform;
     }
 
-    void ResolveWaterLayer()
+    void ResolveOceanIfNeeded()
     {
-        if (waterLayerOverride != null)
+        if (_ocean != null) return;
+
+        // Preferred: the PlanetOceanLayer lives on (or under) the same Planet object that provides gravity,
+        // so its centre matches the gravity centre exactly. Fall back to a global search.
+        if (_planet != null)
         {
-            _waterLayer = waterLayerOverride;
-            return;
+            _ocean = _planet.GetComponent<PlanetOceanLayer>();
+            if (_ocean == null)
+                _ocean = _planet.GetComponentInChildren<PlanetOceanLayer>(true);
+            if (_ocean == null && _planet.transform.parent != null)
+                _ocean = _planet.transform.parent.GetComponentInChildren<PlanetOceanLayer>(true);
+            if (_ocean != null)
+                return;
         }
 
-        if (_planet == null)
-        {
-            _waterLayer = null;
-            return;
-        }
-
-        _waterLayer = _planet.GetComponent<PlanetWaterLayer>() ?? _planet.GetComponentInChildren<PlanetWaterLayer>(true);
+        _ocean = Object.FindFirstObjectByType<PlanetOceanLayer>(FindObjectsInactive.Exclude);
     }
 
-    bool IsInWaterLegacy(Vector3 worldPosition)
+    /// <summary>
+    /// Enter/exit swim state from the player's submersion depth, with hysteresis so the wade/shore
+    /// transition doesn't flicker: start floating once past <see cref="wadeDepthThreshold"/>, and only
+    /// drop back to walking once shallower than <see cref="swimExitDepth"/>.
+    /// </summary>
+    void UpdateSwimState(float depth)
     {
-        if (!enableSwim || _planet == null || _planetCenter == null) return false;
-        float waterR = _planet.GetWaterRadiusWorld();
-        if (waterR <= 0f) return false;
-        float dist = Vector3.Distance(worldPosition, _planetCenter.position);
-        return dist < waterR + waterMargin;
+        if (!enableSwimming || _ocean == null)
+        {
+            _isSwimming = false;
+            return;
+        }
+
+        if (_isSwimming)
+        {
+            if (depth < swimExitDepth)
+                _isSwimming = false;
+        }
+        else if (depth > wadeDepthThreshold)
+        {
+            _isSwimming = true;
+        }
+    }
+
+    /// <summary>
+    /// Spherical float-on-surface swimming. Cancels planet gravity, applies a buoyancy spring-damper
+    /// toward the float line (so the body settles near the surface, never the seabed), adds water drag,
+    /// and drives tangent-plane movement at <see cref="swimSpeed"/>. All vectors are radial: up is the
+    /// gravity up, buoyancy is along up, and swim movement is on the tangent plane.
+    /// </summary>
+    void HandleSwimming(Vector3 wishDir, Vector3 up, float depth, float waveHeight)
+    {
+        float gravityMag = _gravityAttractor != null ? Mathf.Abs(_gravityAttractor.gravity) : 9.8f;
+
+        // Cancel the planet gravity that GravityBody applies (Force mode, magnitude gravityMag along -up),
+        // so buoyancy alone governs vertical motion while in water.
+        rb.AddForce(up * gravityMag, ForceMode.Force);
+
+        Vector3 vel = rb.linearVelocity;
+        float verticalSpeed = Vector3.Dot(vel, up);
+
+        // Depth below the ANIMATED wave surface: as the swell raises/lowers the surface above the player,
+        // the equilibrium of the spring moves with it, so the player rides the crests and troughs.
+        float animatedDepth = depth + waveHeight * waveFollowStrength;
+
+        // Spring-damper toward the float line: positive depthError (too deep) pushes up; damping kills bob.
+        float depthError = animatedDepth - buoyancyTargetDepth;
+        float buoyancyAccel = depthError * buoyancyStrength - verticalSpeed * buoyancyDamping;
+        rb.AddForce(up * buoyancyAccel, ForceMode.Acceleration);
+
+        // General water resistance so swimming feels heavier than air.
+        rb.AddForce(-vel * waterDrag, ForceMode.Acceleration);
+
+        // Optional dive while holding Left Ctrl; the spring resurfaces you on release so you can't
+        // settle on the seabed and walk underwater.
+        bool diveHeld = Keyboard.current != null && Keyboard.current.leftCtrlKey.isPressed;
+        if (diveHeld)
+        {
+            float dv = (-swimDiveSpeed) - verticalSpeed;
+            rb.AddForce(up * dv, ForceMode.VelocityChange);
+        }
+
+        // Horizontal swim: drive tangent-plane velocity toward wishDir * swimSpeed (full control).
+        Vector3 lateral = Vector3.ProjectOnPlane(vel, up);
+        Vector3 target = wishDir * swimSpeed;
+        rb.AddForce(target - lateral, ForceMode.VelocityChange);
+    }
+
+    /// <summary>
+    /// Distance-based footsteps: accumulate horizontal travel while grounded and moving, and emit a
+    /// step sound every <see cref="footstepStrideDistance"/> metres. Because cadence is tied to distance,
+    /// sprinting (faster speed) naturally produces faster footsteps; idle/airborne/swimming play none.
+    /// A min interval caps the rate so very high speeds can't spam the SFX.
+    /// </summary>
+    void UpdateFootsteps(bool grounded, float lateralSpeed, float submersionDepth)
+    {
+        if (!enableFootsteps)
+            return;
+
+        if (!grounded || lateralSpeed < footstepMinSpeed)
+        {
+            // Cut any in-flight step immediately — do not let a clip finish after the player stops.
+            AudioManager.StopFootsteps();
+            // Re-arm so the first step after starting to move lands almost immediately.
+            _distanceSinceStep = Mathf.Max(_distanceSinceStep, footstepStrideDistance * 0.6f);
+            return;
+        }
+
+        _distanceSinceStep += lateralSpeed * Time.fixedDeltaTime;
+        if (_distanceSinceStep < footstepStrideDistance)
+            return;
+
+        if (Time.time - _lastFootstepTime < footstepMinInterval)
+            return;
+
+        _distanceSinceStep = 0f;
+        _lastFootstepTime = Time.time;
+
+        if (!footstepSurfaceVariation)
+        {
+            AudioManager.PlayFootstep(footstepVolume);
+            return;
+        }
+
+        // Classify the area under our feet once per step (cheap analytic colour sample, not per-frame).
+        FootstepSurfaceKind surface = ClassifyFootstepSurface(submersionDepth, out bool isWater);
+        float volume = isWater ? footstepWaterVolume : footstepVolume;
+        AudioManager.PlayFootstep(surface, volume);
+    }
+
+    /// <summary>
+    /// Resolve the footstep surface category under the player: wading in shallow water -> Water splash,
+    /// otherwise the planet's own gradient-colour classification (grass/sand/snow/rock). Falls back to
+    /// Default when no planet is resolved (SfxLibrary then uses the generic Kenney clips).
+    /// </summary>
+    FootstepSurfaceKind ClassifyFootstepSurface(float submersionDepth, out bool isWater)
+    {
+        // Wading: grounded but the feet are under the ocean surface (true swimming already plays no steps).
+        if (_ocean != null && submersionDepth > footstepWaterDepth)
+        {
+            isWater = true;
+            return FootstepSurfaceKind.Water;
+        }
+
+        isWater = false;
+        if (_planet != null)
+            return _planet.GetFootstepSurface(transform.position);
+        return FootstepSurfaceKind.Default;
     }
 
     static Vector3 GravityUpFromPlanet(Transform planetCenter, Vector3 worldPosition)
     {
         if (planetCenter == null) return Vector3.up;
         return (worldPosition - planetCenter.position).normalized;
-    }
-
-    void ApplySwimSurfaceBobbing()
-    {
-        if (_waterLayer == null || _planetCenter == null) return;
-
-        Vector3 waterCenter = _waterLayer.GetWaterShellWorldCenter();
-        Vector3 foot = rb.position;
-        Vector3 fromWater = foot - waterCenter;
-        if (fromWater.sqrMagnitude < 1e-8f)
-            return;
-
-        Vector3 radial = fromWater.normalized;
-        float footR = Vector3.Dot(foot - waterCenter, radial);
-
-        float k;
-        if (cap != null)
-        {
-            Vector3 capWorld = cap.transform.TransformPoint(cap.center);
-            float capR = Vector3.Dot(capWorld - waterCenter, radial);
-            k = capR - footR;
-        }
-        else
-            k = swimFootDepthFallback;
-
-        float shell = _waterLayer.GetWorldWaterShellRadius();
-        float bob = Mathf.Sin(Time.fixedTime * bobFrequency * Mathf.PI * 2f) * bobAmplitude;
-        float targetFootR = shell - k + swimSurfaceOffset + bob;
-
-        float radialError = footR - targetFootR;
-        float radialSpeed = Vector3.Dot(rb.linearVelocity, radial);
-        Vector3 spring = -radial * (radialError * swimSurfaceSpring + radialSpeed * swimRadialDamping);
-        rb.AddForce(spring, ForceMode.Acceleration);
     }
 
     void Update()
@@ -258,45 +365,10 @@ public class PlanetMotor_InputSystem : MonoBehaviour
         ResolvePlanet();
         if (_gravityAttractor == null)
             CacheGravityAttractor();
-        ResolveWaterLayer();
 
         Vector3 pos = transform.position;
         Vector3 gravityUp = GravityUpFromPlanet(_planetCenter, pos);
         Vector3 up = transform.up;
-
-        bool planetHasWater = _planet != null && _planet.colourSettings != null && _planet.colourSettings.useWater && _planet.GetWaterRadiusWorld() > 0f;
-        bool useWaterLayerSwim = enableSwim && enablePlanetWaterLayerSwim && _waterLayer != null && planetHasWater;
-
-        PlayerPlanetSwimStateUtil.SwimGroundState layerState = default;
-        if (useWaterLayerSwim)
-        {
-            layerState = PlayerPlanetSwimStateUtil.Resolve(
-                transform,
-                rb.position,
-                _planetCenter,
-                _waterLayer,
-                cap,
-                _surfaceSwimming,
-                swimZonePadding,
-                swimZoneExitBuffer,
-                1.2f);
-            _surfaceSwimming = layerState.Swimming;
-
-            if (_surfaceSwimming)
-            {
-                ApplySwimSurfaceBobbing();
-                if (_gravityAttractor != null && swimGravityScale < 1f)
-                    rb.AddForce(gravityUp * (-_gravityAttractor.gravity) * (1f - swimGravityScale), ForceMode.Acceleration);
-            }
-        }
-        else
-            _surfaceSwimming = false;
-
-        bool inWaterLegacy = enableSwim && !useWaterLayerSwim && IsInWaterLegacy(pos);
-        if (inWaterLegacy && swimBuoyancyAcceleration > 0f)
-            rb.AddForce(gravityUp * swimBuoyancyAcceleration, ForceMode.Acceleration);
-        if (inWaterLegacy && swimSinkAcceleration > 0f)
-            rb.AddForce(-gravityUp * swimSinkAcceleration, ForceMode.Acceleration);
 
         Vector2 move = Vector2.zero;
         if (Keyboard.current != null)
@@ -323,8 +395,7 @@ public class PlanetMotor_InputSystem : MonoBehaviour
             (Keyboard.current != null && Keyboard.current.leftShiftKey.isPressed) ||
             (Gamepad.current != null && Gamepad.current.leftStickButton.isPressed);
 
-        float swimMult = (_surfaceSwimming || inWaterLegacy) ? swimSpeedMultiplier : 1f;
-        float speed = moveSpeed * externalSpeedMultiplier * swimMult * (sprintHeld && move.sqrMagnitude > 0.01f ? sprintSpeedMultiplier : 1f);
+        float speed = moveSpeed * externalSpeedMultiplier * (sprintHeld && move.sqrMagnitude > 0.01f ? sprintSpeedMultiplier : 1f);
 
         Vector3 camF = cameraTransform ? cameraTransform.forward : transform.forward;
         Vector3 camR = cameraTransform ? cameraTransform.right : transform.right;
@@ -337,6 +408,40 @@ public class PlanetMotor_InputSystem : MonoBehaviour
 
         if (TryBuildLockOnOrbitWishDir(move, up, camF, ref wishDir))
             _lockOnOrbitMoveEngaged = true;
+
+        // --- Water: float on the surface and swim, instead of walking on the seabed. ---
+        ResolveOceanIfNeeded();
+        // Mean (static) sea-level depth drives the swim STATE (stable across passing waves);
+        // the wave height is added on top inside the buoyancy spring so the float line bobs.
+        float submersionDepth = _ocean != null ? _ocean.GetDepthBelowSurface(pos) : float.NegativeInfinity;
+        float waveHeight = _ocean != null ? _ocean.GetWaveHeightAtPosition(pos, Time.time) : 0f;
+        UpdateSwimState(submersionDepth);
+
+        if (debugSwim && Time.time >= _nextSwimLogTime)
+        {
+            _nextSwimLogTime = Time.time + 0.5f;
+            Vector3 centre = _ocean != null ? _ocean.OceanCentreWorld
+                : (_planetCenter != null ? _planetCenter.position : Vector3.zero);
+            float distFromCentre = Vector3.Distance(pos, centre);
+            float oceanRadius = _ocean != null ? _ocean.OceanSurfaceRadiusWorld : -1f;
+            float shoreCalm = _ocean != null ? _ocean.GetShoreCalm01(pos) : 0f;
+            // Radius the player should float at (animated surface minus the body float depth).
+            float targetRadius = oceanRadius + waveHeight * waveFollowStrength - buoyancyTargetDepth;
+            Debug.Log($"[Swim] oceanFound={_ocean != null} oceanRadius={oceanRadius:F2} " +
+                      $"distFromCentre={distFromCentre:F3} depth={submersionDepth:F2} waveHeight={waveHeight:F3} " +
+                      $"shoreCalm={shoreCalm:F2} waveFollow={waveFollowStrength:F2} targetRadius={targetRadius:F3} " +
+                      $"wadeThreshold={wadeDepthThreshold:F2} enableSwimming={enableSwimming} isSwimming={_isSwimming}", this);
+        }
+
+        if (_isSwimming)
+        {
+            HandleSwimming(wishDir, up, submersionDepth, waveHeight);
+            // No footsteps while swimming; reset so we don't emit a stale step on surfacing.
+            AudioManager.StopFootsteps();
+            _distanceSinceStep = 0f;
+            jumpQueued = false;
+            return;
+        }
 
         float castRadius = cap.radius * 0.95f;
         Vector3 castOrigin = transform.position + up * (castRadius + 0.05f);
@@ -358,7 +463,7 @@ public class PlanetMotor_InputSystem : MonoBehaviour
 
         bool coyoteOk = (Time.time - lastGroundedTime) <= coyoteTime;
 
-        if (!grounded && !inWaterLegacy && !(useWaterLayerSwim && _surfaceSwimming))
+        if (!grounded)
         {
             float gravityMagnitude = _gravityAttractor != null ? Mathf.Abs(_gravityAttractor.gravity) : 9.8f;
             float verticalSpeed = Vector3.Dot(rb.linearVelocity, up);
@@ -373,53 +478,18 @@ public class PlanetMotor_InputSystem : MonoBehaviour
                 rb.AddForce(-up * extraGravity, ForceMode.Acceleration);
         }
 
-        if (useWaterLayerSwim && _surfaceSwimming)
-        {
-            Vector3 radialOut = gravityUp;
-            float inputMag = Mathf.Clamp01(move.magnitude);
-            Vector3 tangentDir = Vector3.ProjectOnPlane(wishDir, radialOut);
-            float tangentMag = tangentDir.magnitude;
-            if (tangentMag > 1e-5f)
-                tangentDir /= tangentMag;
-
-            Vector3 v = rb.linearVelocity;
-            float vAlongRadial = Vector3.Dot(v, radialOut);
-            Vector3 vRadial = radialOut * vAlongRadial;
-            Vector3 vTan = v - vRadial;
-
-            float sSpeed = swimMoveSpeed * externalSpeedMultiplier * (sprintHeld && inputMag > 0.01f ? sprintSpeedMultiplier : 1f);
-            Vector3 wishTangent = tangentDir * (sSpeed * inputMag);
-            float maxDv = swimSteerAcceleration * Time.fixedDeltaTime;
-
-            if (inputMag > 0.01f)
-            {
-                Vector3 dv = wishTangent - vTan;
-                if (dv.magnitude > maxDv)
-                    dv = dv.normalized * maxDv;
-                rb.AddForce(dv, ForceMode.VelocityChange);
-            }
-            else
-            {
-                Vector3 damp = Vector3.ClampMagnitude(-vTan, swimTangentialDrag * Time.fixedDeltaTime);
-                rb.AddForce(damp, ForceMode.VelocityChange);
-            }
-
-            jumpQueued = false;
-            return;
-        }
-
         Vector3 vel = rb.linearVelocity;
         Vector3 lateral = Vector3.ProjectOnPlane(vel, up);
 
+        UpdateFootsteps(grounded, lateral.magnitude, submersionDepth);
+
         Vector3 target = wishDir * speed;
-        float control = grounded ? 1f : (inWaterLegacy ? swimMoveControl : airControl);
+        float control = grounded ? 1f : airControl;
 
         Vector3 delta = (target - lateral) * control;
         rb.AddForce(delta, ForceMode.VelocityChange);
 
-        bool allowJump = useWaterLayerSwim
-            ? (layerState.Grounded && !_surfaceSwimming)
-            : (grounded || coyoteOk);
+        bool allowJump = grounded || coyoteOk;
 
         if (jumpQueued && allowJump)
         {

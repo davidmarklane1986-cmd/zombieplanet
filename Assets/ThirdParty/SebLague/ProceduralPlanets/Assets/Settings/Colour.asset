@@ -48,7 +48,7 @@ MonoBehaviour:
       tint: {r: 0, g: 0, b: 0, a: 0}
       startHeight: 0
       tintPercent: 0
-      terrainTexture: {fileID: 2800000, guid: 583f9047eed05c342b9997b4ff0270a3, type: 3}
+      terrainTexture: {fileID: 2800000, guid: fbba21ba6c1f94445b5fc5ec8761416d, type: 3}
       texturesPerGradientKey: []
     - gradient:
         serializedVersion: 2
@@ -83,7 +83,7 @@ MonoBehaviour:
       tint: {r: 0, g: 0, b: 0, a: 0}
       startHeight: 0.517
       tintPercent: 0
-      terrainTexture: {fileID: 2800000, guid: ddfcfecd4e7574b41ab6d976c9778486, type: 3}
+      terrainTexture: {fileID: 2800000, guid: 780df0da6ab54ca40821db1b339520ee, type: 3}
       texturesPerGradientKey: []
     - gradient:
         serializedVersion: 2
@@ -118,7 +118,7 @@ MonoBehaviour:
       tint: {r: 1, g: 0.7533275, b: 0, a: 0}
       startHeight: 0.833
       tintPercent: 0
-      terrainTexture: {fileID: 2800000, guid: 55e05f56a6aa4804ea4a76b5b7b35fd1, type: 3}
+      terrainTexture: {fileID: 2800000, guid: 4b17739d8bfd9e149b62d2c1e454e558, type: 3}
       texturesPerGradientKey: []
     noise:
       filterType: 0
@@ -144,7 +144,9 @@ MonoBehaviour:
     blendAmount: 0.242
     textureBoundaryBlur: 0.15
     textureOverlapWidth: 0.5
-    textureTiling: {x: 300, y: 300}
+    textureTiling: {x: 120, y: 120}
+    useStochasticTexturing: 1
+    stochasticContrast: 4
   useHeightBands: 0
   heightBands: []
   useSlopeTint: 1

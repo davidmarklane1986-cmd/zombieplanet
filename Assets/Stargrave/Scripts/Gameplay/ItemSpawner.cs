@@ -11,7 +11,16 @@ public sealed class ItemSpawner : MonoBehaviour
     public static ItemSpawner Instance { get; private set; }
 
     [Header("Spawn Setup")]
+    [Tooltip("Generic fallback prefab used when no per-kind prefab is resolved.")]
     public GameObject pickupPrefab;
+
+    [Header("Per-Kind Prefabs (optional)")]
+    [Tooltip("Prefab for HealthPack pickups. If null, loaded from Resources/PowerUps/PowerUp_Health.")]
+    public GameObject healthPickupPrefab;
+    [Tooltip("Prefab for SpeedBoost pickups. If null, loaded from Resources/PowerUps/PowerUp_Speed.")]
+    public GameObject speedPickupPrefab;
+    [Tooltip("Prefab for FireRateBoost (rapid fire) pickups. If null, loaded from Resources/PowerUps/PowerUp_RapidFire.")]
+    public GameObject rapidFirePickupPrefab;
     [Tooltip("How many power-ups can exist at once.")]
     public int maxActiveItems = 1;
     [Tooltip("First spawn after this many seconds.")]
@@ -45,10 +54,24 @@ public sealed class ItemSpawner : MonoBehaviour
     public float speedBoostDurationSeconds = 12f;
     public float speedBoostMultiplier = 2f;
 
+    // Stable Resources paths (relative to any Resources/ folder). The editor tool
+    // Tools/Stargrave/Build Power-Up Prefabs writes the model prefabs here so the
+    // runtime-created spawner (which has no inspector wiring) can still find them.
+    const string ResourcesHealthPath = "PowerUps/PowerUp_Health";
+    const string ResourcesSpeedPath = "PowerUps/PowerUp_Speed";
+    const string ResourcesRapidFirePath = "PowerUps/PowerUp_RapidFire";
+
     readonly List<PowerUpPickup> _activeItems = new List<PowerUpPickup>();
     Transform _player;
     bool _warnedMissingPrefab;
     bool _warnedNoPlanet;
+
+    GameObject _resHealthPrefab;
+    GameObject _resSpeedPrefab;
+    GameObject _resRapidFirePrefab;
+    bool _resHealthLoaded;
+    bool _resSpeedLoaded;
+    bool _resRapidFireLoaded;
 
     void Awake()
     {
@@ -126,19 +149,83 @@ public sealed class ItemSpawner : MonoBehaviour
     {
         Vector3 position = GetDrySurfacePositionNearPlayer();
 
-        GameObject go = pickupPrefab != null
-            ? Instantiate(pickupPrefab, position, Quaternion.identity)
+        // Roll the kind FIRST so we can instantiate the matching per-kind prefab.
+        PowerUpPickup.Kind kind = RollKind();
+
+        GameObject prefab = ResolvePrefabForKind(kind);
+        GameObject go = prefab != null
+            ? Instantiate(prefab, position, Quaternion.identity)
             : CreateFallbackPickup(position);
         if (go == null)
             return;
+
+        go.transform.position = position;
 
         PowerUpPickup pickup = go.GetComponent<PowerUpPickup>();
         if (pickup == null)
             pickup = go.AddComponent<PowerUpPickup>();
 
-        ConfigurePickup(pickup);
+        ConfigurePickup(pickup, kind);
         _activeItems.Add(pickup);
         StartCoroutine(DestroyPickupAfterDelay(pickup, Mathf.Max(0.5f, pickupLifetimeSeconds)));
+    }
+
+    PowerUpPickup.Kind RollKind()
+    {
+        float total = Mathf.Max(0.001f, healthPickupChance + rapidFirePickupChance + speedPickupChance);
+        float roll = Random.value * total;
+
+        if (roll < healthPickupChance)
+            return PowerUpPickup.Kind.HealthPack;
+        if (roll < healthPickupChance + rapidFirePickupChance)
+            return PowerUpPickup.Kind.FireRateBoost;
+        return PowerUpPickup.Kind.SpeedBoost;
+    }
+
+    // Precedence: serialized field > Resources prefab > generic pickupPrefab > sphere fallback (null here).
+    GameObject ResolvePrefabForKind(PowerUpPickup.Kind kind)
+    {
+        switch (kind)
+        {
+            case PowerUpPickup.Kind.HealthPack:
+                if (healthPickupPrefab != null)
+                    return healthPickupPrefab;
+                if (!_resHealthLoaded)
+                {
+                    _resHealthPrefab = Resources.Load<GameObject>(ResourcesHealthPath);
+                    _resHealthLoaded = true;
+                }
+                if (_resHealthPrefab != null)
+                    return _resHealthPrefab;
+                break;
+
+            case PowerUpPickup.Kind.FireRateBoost:
+                if (rapidFirePickupPrefab != null)
+                    return rapidFirePickupPrefab;
+                if (!_resRapidFireLoaded)
+                {
+                    _resRapidFirePrefab = Resources.Load<GameObject>(ResourcesRapidFirePath);
+                    _resRapidFireLoaded = true;
+                }
+                if (_resRapidFirePrefab != null)
+                    return _resRapidFirePrefab;
+                break;
+
+            case PowerUpPickup.Kind.SpeedBoost:
+                if (speedPickupPrefab != null)
+                    return speedPickupPrefab;
+                if (!_resSpeedLoaded)
+                {
+                    _resSpeedPrefab = Resources.Load<GameObject>(ResourcesSpeedPath);
+                    _resSpeedLoaded = true;
+                }
+                if (_resSpeedPrefab != null)
+                    return _resSpeedPrefab;
+                break;
+        }
+
+        // Generic prefab fallback (CreateFallbackPickup handles the null/sphere case).
+        return pickupPrefab;
     }
 
     GameObject CreateFallbackPickup(Vector3 position)
@@ -162,35 +249,30 @@ public sealed class ItemSpawner : MonoBehaviour
         return go;
     }
 
-    void ConfigurePickup(PowerUpPickup pickup)
+    void ConfigurePickup(PowerUpPickup pickup, PowerUpPickup.Kind kind)
     {
-        float total = Mathf.Max(0.001f, healthPickupChance + rapidFirePickupChance + speedPickupChance);
-        float roll = Random.value * total;
-
         pickup.destroyOnPickup = true;
         pickup.respawnDelaySeconds = 0f;
+        pickup.kind = kind;
 
-        if (roll < healthPickupChance)
+        switch (kind)
         {
-            pickup.kind = PowerUpPickup.Kind.HealthPack;
-            pickup.durationSeconds = 0f;
-            pickup.multiplier = 1f;
-            pickup.healAmount = Mathf.Max(1, minimumHealthRestore);
-            pickup.healFractionOfMaxHealth = Mathf.Clamp01(healthRestoreFraction);
-        }
-        else if (roll < healthPickupChance + rapidFirePickupChance)
-        {
-            pickup.kind = PowerUpPickup.Kind.FireRateBoost;
-            pickup.durationSeconds = Mathf.Max(0.1f, rapidFireDurationSeconds);
-            pickup.multiplier = Mathf.Max(1f, rapidFireFireRateMultiplier);
-            pickup.healFractionOfMaxHealth = 0f;
-        }
-        else
-        {
-            pickup.kind = PowerUpPickup.Kind.SpeedBoost;
-            pickup.durationSeconds = Mathf.Max(0.1f, speedBoostDurationSeconds);
-            pickup.multiplier = Mathf.Max(1f, speedBoostMultiplier);
-            pickup.healFractionOfMaxHealth = 0f;
+            case PowerUpPickup.Kind.HealthPack:
+                pickup.durationSeconds = 0f;
+                pickup.multiplier = 1f;
+                pickup.healAmount = Mathf.Max(1, minimumHealthRestore);
+                pickup.healFractionOfMaxHealth = Mathf.Clamp01(healthRestoreFraction);
+                break;
+            case PowerUpPickup.Kind.FireRateBoost:
+                pickup.durationSeconds = Mathf.Max(0.1f, rapidFireDurationSeconds);
+                pickup.multiplier = Mathf.Max(1f, rapidFireFireRateMultiplier);
+                pickup.healFractionOfMaxHealth = 0f;
+                break;
+            default: // SpeedBoost
+                pickup.durationSeconds = Mathf.Max(0.1f, speedBoostDurationSeconds);
+                pickup.multiplier = Mathf.Max(1f, speedBoostMultiplier);
+                pickup.healFractionOfMaxHealth = 0f;
+                break;
         }
 
         pickup.RefreshVisuals();
@@ -219,7 +301,6 @@ public sealed class ItemSpawner : MonoBehaviour
             return GetFallbackSpawnNearPlayer();
 
         Planet planet = planetTransform.GetComponent<Planet>();
-        PlanetWaterLayer water = planetTransform.GetComponentInChildren<PlanetWaterLayer>(true);
         MeshCollider planetCollider = ZombieAI.ResolvePrimaryTerrainMeshCollider(planetTransform);
         Vector3 center = planetTransform.position;
         Vector3 direction = GetSpawnDirectionNearPlayer(center);
@@ -228,13 +309,11 @@ public sealed class ItemSpawner : MonoBehaviour
             direction,
             center,
             planetCollider,
-            water,
             planet,
             ~0,
             maxSpawnRayAttempts,
             1f,
-            52f,
-            -0.25f);
+            52f);
     }
 
     Vector3 GetSpawnDirectionNearPlayer(Vector3 planetCenter)

@@ -14,7 +14,8 @@ GameObject:
   - component: {fileID: 941028681254744304}
   - component: {fileID: 7702441324113915659}
   - component: {fileID: 5171889451651900725}
-  m_Layer: 6
+  - component: {fileID: 8023780893035051795}
+  m_Layer: 0
   m_Name: Zombie
   m_TagString: Untagged
   m_Icon: {fileID: 0}
@@ -30,7 +31,7 @@ Transform:
   m_GameObject: {fileID: 6987126756913628586}
   serializedVersion: 2
   m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
-  m_LocalPosition: {x: 0, y: 0.19, z: 0}
+  m_LocalPosition: {x: 0, y: 0, z: 0}
   m_LocalScale: {x: 1, y: 1, z: 1}
   m_ConstrainProportionsScale: 0
   m_Children:
@@ -113,6 +114,7 @@ MonoBehaviour:
   m_EditorClassIdentifier: Assembly-CSharp::CharacterAlign
   characterModel: {fileID: 0}
   modelHeightOffset: 0
+  modelEulerOffset: {x: 0, y: 0, z: 0}
   rotationOffsetDegrees: 0
 --- !u!114 &5171889451651900725
 MonoBehaviour:
@@ -126,24 +128,58 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 15e5f6dcef151b34bb03eb399fe5789f, type: 3}
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::ZombieAI
-  planetCenter: {fileID: 0}
-  player: {fileID: 0}
-  animator: {fileID: 5480775578778592667}
-  chaseRadius: 50
-  chaseSpeed: 3
-  stopDistance: 2.5
-  roamSpeed: 1.5
+  moveSpeed: 2.4
+  gravityStrength: 20
+  detectionRadius: 25
+  attackRadius: 2
+  rotationSpeed: 5
   roamChangeInterval: 4
-  rotationSpeed: 8
-  minDistanceFromZombies: 1
-  separationRadius: 3
-  separationStrength: 0.8
-  surfaceStickDistance: 0.6
-  surfaceStickForce: 40
-  surfaceRayLength: 8
-  groundMask:
-    serializedVersion: 2
-    m_Bits: 4294967295
+  surfaceStickDistance: 0.5
+  surfaceStickForce: 50
+  surfaceStickRaycastPeriod: 2
+  aiDecisionPeriod: 2
+  farDecisionDistance: 80
+  farDecisionPeriodMultiplier: 2
+  fullAiNearDistance: 35
+  maxFullAiEnemiesNearPlayer: 120
+  cheapIdleSpeedMultiplier: 0.45
+  cheapDecisionPeriodMultiplier: 3
+  animateMaxDistance: 45
+  inWaterDepthThreshold: 0.35
+  waterLookAheadDistance: 2.5
+  waterEdgeClearance: 0.5
+  landSeekSampleCount: 8
+  landSeekSampleAngleDegrees: 8
+  landSeekRecomputeInterval: 0.75
+  provokedAggroDuration: 30
+  maxHealth: 10
+  minShotsToKill: 7
+  maxShotsToKill: 10
+  attackDamage: 15
+  attackCooldown: 1
+  hitSfx: {fileID: 0}
+  hitSfxVolume: 0.75
+  deathSfx: {fileID: 0}
+  deathSfxVolume: 0.85
+  sfxMixerGroup: {fileID: 0}
+  hitVfxPrefab: {fileID: 0}
+  deathVfxPrefab: {fileID: 0}
+  animator: {fileID: 5480775578778592667}
+  locomotion: {fileID: 0}
+  locomotionIdle: {fileID: 0}
+  locomotionRun: {fileID: 0}
+--- !u!114 &8023780893035051795
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 6987126756913628586}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: c0951fdb60ea49f4d97f537617773dae, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::ZombieVisibilityCuller
 --- !u!1001 &1192603409678266307
 PrefabInstance:
   m_ObjectHideFlags: 0
@@ -160,13 +196,21 @@ PrefabInstance:
       propertyPath: m_LocalRotation.z
       value: 0.50521225
       objectReference: {fileID: 0}
-    - target: {fileID: 3139958025873186207, guid: 3a855f8e9a4b44840b8b116d95bdfd89, type: 3}
-      propertyPath: m_LocalPosition.y
-      value: 0.16
-      objectReference: {fileID: 0}
     - target: {fileID: 5783241991720835976, guid: 3a855f8e9a4b44840b8b116d95bdfd89, type: 3}
       propertyPath: m_Name
       value: CharacterModel
+      objectReference: {fileID: 0}
+    - target: {fileID: 6560024332827148594, guid: 3a855f8e9a4b44840b8b116d95bdfd89, type: 3}
+      propertyPath: m_LocalScale.x
+      value: 0.6570999
+      objectReference: {fileID: 0}
+    - target: {fileID: 6560024332827148594, guid: 3a855f8e9a4b44840b8b116d95bdfd89, type: 3}
+      propertyPath: m_LocalScale.y
+      value: 0.6570999
+      objectReference: {fileID: 0}
+    - target: {fileID: 6560024332827148594, guid: 3a855f8e9a4b44840b8b116d95bdfd89, type: 3}
+      propertyPath: m_LocalScale.z
+      value: 0.6570999
       objectReference: {fileID: 0}
     - target: {fileID: 6560024332827148594, guid: 3a855f8e9a4b44840b8b116d95bdfd89, type: 3}
       propertyPath: m_LocalPosition.x
@@ -211,12 +255,40 @@ PrefabInstance:
     - target: {fileID: 6666270978826373720, guid: 3a855f8e9a4b44840b8b116d95bdfd89, type: 3}
       propertyPath: m_Controller
       value: 
-      objectReference: {fileID: 9100000, guid: 8e097e07dc3c9144fa16ccb73a379cdf, type: 2}
+      objectReference: {fileID: 9100000, guid: 3c2f6a7de0474ff47afc599d1434d209, type: 2}
+    - target: {fileID: 7291499408840389198, guid: 3a855f8e9a4b44840b8b116d95bdfd89, type: 3}
+      propertyPath: m_UpdateWhenOffscreen
+      value: 1
+      objectReference: {fileID: 0}
     m_RemovedComponents: []
     m_RemovedGameObjects: []
     m_AddedGameObjects: []
-    m_AddedComponents: []
+    m_AddedComponents:
+    - targetCorrespondingSourceObject: {fileID: 5783241991720835976, guid: 3a855f8e9a4b44840b8b116d95bdfd89, type: 3}
+      insertIndex: -1
+      addedObject: {fileID: 4343546689144207687}
   m_SourcePrefab: {fileID: 100100000, guid: 3a855f8e9a4b44840b8b116d95bdfd89, type: 3}
+--- !u!1 &4669891450277622859 stripped
+GameObject:
+  m_CorrespondingSourceObject: {fileID: 5783241991720835976, guid: 3a855f8e9a4b44840b8b116d95bdfd89, type: 3}
+  m_PrefabInstance: {fileID: 1192603409678266307}
+  m_PrefabAsset: {fileID: 0}
+--- !u!114 &4343546689144207687
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 4669891450277622859}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: c8e4f1a29b7d4e6a91f0c3d5b8a7e612, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::ZombieLocomotionAnimator
+  animator: {fileID: 5480775578778592667}
+  idleStateName: Idle
+  walkStateName: Walk
+  moveThreshold: 0.15
 --- !u!4 &5441783370174312177 stripped
 Transform:
   m_CorrespondingSourceObject: {fileID: 6560024332827148594, guid: 3a855f8e9a4b44840b8b116d95bdfd89, type: 3}

@@ -20,8 +20,12 @@ public sealed class StargraveFrontendBootstrap : MonoBehaviour
         BootLoading,
         Menu,
         Playing,
+        Paused,
         GameOver
     }
+
+    // Semi-transparent so the frozen world stays visible behind the pause menu ("resume where you left off").
+    static readonly Color PausedBackgroundColor = new Color(0f, 0f, 0f, 0.72f);
 
     static bool s_AutoStartNextBoot;
     static InputActionAsset s_RuntimeUiActions;
@@ -71,6 +75,7 @@ public sealed class StargraveFrontendBootstrap : MonoBehaviour
     Text _menuStatsText;
     Text _settingsProfileText;
     Text _gameOverStatsText;
+    Button _menuResumeButton;
     Button _menuPlayButton;
     Button _menuSettingsButton;
     Button _settingsPerformanceButton;
@@ -117,6 +122,8 @@ public sealed class StargraveFrontendBootstrap : MonoBehaviour
 
     void Update()
     {
+        HandlePauseInput();
+
         if (_state == FrontendState.Playing || _state == FrontendState.BootLoading)
             return;
 
@@ -277,21 +284,25 @@ public sealed class StargraveFrontendBootstrap : MonoBehaviour
         _menuPanel = CreateUiObject("MenuPanel", panel.transform);
         Stretch(_menuPanel.GetComponent<RectTransform>());
 
-        var title = CreateText(_menuPanel.transform, "Title", "STARGRAVE", 54, new Vector2(0.5f, 0.68f), new Vector2(900f, 80f), font);
+        var title = CreateText(_menuPanel.transform, "Title", "STARGRAVE", 54, new Vector2(0.5f, 0.70f), new Vector2(900f, 80f), font);
         title.color = new Color(0.95f, 0.96f, 1f, 1f);
 
-        _menuSubtitleText = CreateText(_menuPanel.transform, "Subtitle", "Main menu", 24, new Vector2(0.5f, 0.60f), new Vector2(900f, 40f), font);
+        _menuSubtitleText = CreateText(_menuPanel.transform, "Subtitle", "Main menu", 24, new Vector2(0.5f, 0.63f), new Vector2(900f, 40f), font);
         _menuSubtitleText.color = new Color(0.72f, 0.78f, 0.88f, 1f);
 
-        _menuStatsText = CreateText(_menuPanel.transform, "MenuStats", "", 22, new Vector2(0.5f, 0.53f), new Vector2(960f, 80f), font);
+        _menuStatsText = CreateText(_menuPanel.transform, "MenuStats", "", 22, new Vector2(0.5f, 0.56f), new Vector2(960f, 80f), font);
         _menuStatsText.color = new Color(0.84f, 0.87f, 0.93f, 1f);
 
-        _menuPlayButton = CreateButton(_menuPanel.transform, "PlayButton", "Play", new Vector2(0.5f, 0.43f), new Color(0.22f, 0.55f, 0.32f, 1f), font);
-        _menuSettingsButton = CreateButton(_menuPanel.transform, "SettingsButton", "Settings", new Vector2(0.5f, 0.35f), new Color(0.22f, 0.36f, 0.55f, 1f), font);
-        var quit = CreateButton(_menuPanel.transform, "QuitButton", "Quit", new Vector2(0.5f, 0.27f), new Color(0.45f, 0.22f, 0.22f, 1f), font);
+        // Resume sits at the top of the button stack but is only shown in the pause context (see SetResumeButtonVisible).
+        _menuResumeButton = CreateButton(_menuPanel.transform, "ResumeButton", "Resume", new Vector2(0.5f, 0.46f), new Color(0.20f, 0.52f, 0.46f, 1f), font);
+        _menuPlayButton = CreateButton(_menuPanel.transform, "PlayButton", "Play", new Vector2(0.5f, 0.38f), new Color(0.22f, 0.55f, 0.32f, 1f), font);
+        _menuSettingsButton = CreateButton(_menuPanel.transform, "SettingsButton", "Settings", new Vector2(0.5f, 0.30f), new Color(0.22f, 0.36f, 0.55f, 1f), font);
+        var quit = CreateButton(_menuPanel.transform, "QuitButton", "Quit", new Vector2(0.5f, 0.22f), new Color(0.45f, 0.22f, 0.22f, 1f), font);
+        _menuResumeButton.onClick.AddListener(OnResumeClicked);
         _menuPlayButton.onClick.AddListener(OnPlayClicked);
         _menuSettingsButton.onClick.AddListener(OnSettingsClicked);
         quit.onClick.AddListener(OnQuitClicked);
+        SetResumeButtonVisible(false);
 
         _settingsPanel = CreateUiObject("SettingsPanel", panel.transform);
         Stretch(_settingsPanel.GetComponent<RectTransform>());
@@ -377,6 +388,48 @@ public sealed class StargraveFrontendBootstrap : MonoBehaviour
         EnterMenuState(true);
     }
 
+    void OnResumeClicked()
+    {
+        ResumeFromPause();
+    }
+
+    /// <summary>
+    /// Esc (keyboard) or Start/Options (gamepad — on a PS4 DualShock the Options button maps to
+    /// <c>&lt;Gamepad&gt;/start</c>) toggles pause while a run is in progress. Read directly off the devices to
+    /// match the rest of the project's input handling (no PlayerInput / .inputactions asset is used at runtime).
+    /// </summary>
+    void HandlePauseInput()
+    {
+        if (!PauseTogglePressedThisFrame())
+            return;
+
+        if (_state == FrontendState.Playing)
+        {
+            AudioManager.PlayUiClick();
+            EnterPausedState();
+        }
+        else if (_state == FrontendState.Paused)
+        {
+            AudioManager.PlayUiClick();
+            ResumeFromPause();
+        }
+    }
+
+    static bool PauseTogglePressedThisFrame()
+    {
+        if (Keyboard.current != null && Keyboard.current.escapeKey.wasPressedThisFrame)
+            return true;
+        if (Gamepad.current != null && Gamepad.current.startButton.wasPressedThisFrame)
+            return true;
+        return false;
+    }
+
+    void SetResumeButtonVisible(bool visible)
+    {
+        if (_menuResumeButton != null)
+            _menuResumeButton.gameObject.SetActive(visible);
+    }
+
     void OnSettingsClicked()
     {
         RefreshSettingsUi();
@@ -388,11 +441,15 @@ public sealed class StargraveFrontendBootstrap : MonoBehaviour
 
     void OnSettingsBackClicked()
     {
+        bool paused = _state == FrontendState.Paused;
         _settingsPanel.SetActive(false);
         _menuPanel.SetActive(true);
+        SetResumeButtonVisible(paused);
         RefreshMenuSummary(_runResetRequired);
-        SetBackgroundColor(Color.black);
-        QueueFocusButton(_menuPlayButton);
+        if (paused && _menuSubtitleText != null)
+            _menuSubtitleText.text = "Paused";
+        SetBackgroundColor(paused ? PausedBackgroundColor : Color.black);
+        QueueFocusButton(paused ? _menuResumeButton : _menuPlayButton);
     }
 
     void OnPerformancePresetClicked()
@@ -482,10 +539,64 @@ public sealed class StargraveFrontendBootstrap : MonoBehaviour
         _gameOverPanel.SetActive(false);
         _settingsPanel.SetActive(false);
         _menuPanel.SetActive(true);
+        SetResumeButtonVisible(false);
         SetBackgroundColor(Color.black);
         RefreshMenuSummary(afterGameOver);
         RefreshSettingsUi();
         QueueFocusButton(_menuPlayButton);
+    }
+
+    /// <summary>
+    /// Pause an in-progress run: freeze gameplay (<see cref="SetPaused"/> sets <c>Time.timeScale = 0</c>), disable
+    /// player control, and show the main-menu panel with the Resume button over the still-visible frozen world.
+    /// Game state is untouched, so resuming continues exactly where the player left off.
+    /// </summary>
+    void EnterPausedState()
+    {
+        _state = FrontendState.Paused;
+        ResolveRuntimeRefs();
+        if (_player != null)
+            _player.SetGameplayControlEnabled(false);
+        if (_hud != null)
+            _hud.SetHudVisible(false);
+
+        SetPaused(true);
+        _loadingPanel.SetActive(false);
+        _gameOverPanel.SetActive(false);
+        _settingsPanel.SetActive(false);
+        _menuPanel.SetActive(true);
+        SetResumeButtonVisible(true);
+        SetBackgroundColor(PausedBackgroundColor);
+        RefreshMenuSummary(false);
+        if (_menuSubtitleText != null)
+            _menuSubtitleText.text = "Paused";
+        RefreshSettingsUi();
+        QueueFocusButton(_menuResumeButton);
+    }
+
+    /// <summary>
+    /// Leave the pause menu and hand control straight back to the running game (no respawn / reset / scene reload),
+    /// restoring <c>Time.timeScale</c> via <see cref="SetPaused"/>.
+    /// </summary>
+    void ResumeFromPause()
+    {
+        ResolveRuntimeRefs();
+        _loadingPanel.SetActive(false);
+        _settingsPanel.SetActive(false);
+        _menuPanel.SetActive(false);
+        _gameOverPanel.SetActive(false);
+        SetResumeButtonVisible(false);
+        SetBackgroundColor(new Color(0f, 0f, 0f, 0f));
+
+        SetPaused(false);
+        if (_player != null)
+            _player.SetGameplayControlEnabled(true);
+        if (_hud != null)
+            _hud.SetHudVisible(true);
+
+        if (EventSystem.current != null)
+            EventSystem.current.SetSelectedGameObject(null);
+        _state = FrontendState.Playing;
     }
 
     void EnterGameOverState()
@@ -697,7 +808,7 @@ public sealed class StargraveFrontendBootstrap : MonoBehaviour
         if (_gameOverPanel != null && _gameOverPanel.activeInHierarchy)
             return _gameOverMenuButton;
         if (_menuPanel != null && _menuPanel.activeInHierarchy)
-            return _menuPlayButton;
+            return _state == FrontendState.Paused ? _menuResumeButton : _menuPlayButton;
         return null;
     }
 
@@ -808,6 +919,9 @@ public sealed class StargraveFrontendBootstrap : MonoBehaviour
         navigation.mode = Navigation.Mode.Automatic;
         button.navigation = navigation;
 
+        // Every menu button clicks on press (plays even while paused via AudioManager.PlayUi -> ignoreListenerPause).
+        button.onClick.AddListener(() => AudioManager.PlayUiClick());
+
         var text = CreateText(go.transform, "Text", label, 26, new Vector2(0.5f, 0.5f), rt.sizeDelta, font);
         text.color = Color.white;
         go.AddComponent<FrontendButtonScaleFx>();
@@ -865,6 +979,10 @@ public sealed class StargraveFrontendBootstrap : MonoBehaviour
 
         public void OnSelect(BaseEventData eventData)
         {
+            // Rollover on selection-change covers BOTH mouse hover (pointer-enter selects the button)
+            // and controller/keyboard navigation. Plays while paused (UI sound, ignores listener pause).
+            if (!_isSelected)
+                AudioManager.PlayUiRollover();
             _isSelected = true;
         }
 

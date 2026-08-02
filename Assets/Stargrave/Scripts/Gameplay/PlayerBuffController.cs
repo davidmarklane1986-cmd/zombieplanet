@@ -30,6 +30,8 @@ public class PlayerBuffController : MonoBehaviour
         public float damageMult;
         public float fireRateMult;
         public float endTime;
+        public float remainingSeconds;
+        public bool drainWhileUsed;
     }
 
     /// <summary>Product of active timed buffs; 1 when none.</summary>
@@ -52,14 +54,21 @@ public class PlayerBuffController : MonoBehaviour
 
     void Update()
     {
-        // Expire buffs
         float now = Time.time;
         var keysToRemove = new List<string>();
 
         foreach (var kvp in active)
         {
-            if (now >= kvp.Value.endTime)
+            ActiveBuff b = kvp.Value;
+            if (b.drainWhileUsed)
+            {
+                if (b.remainingSeconds <= 0f)
+                    keysToRemove.Add(kvp.Key);
+            }
+            else if (now >= b.endTime)
+            {
                 keysToRemove.Add(kvp.Key);
+            }
         }
 
         for (int i = 0; i < keysToRemove.Count; i++)
@@ -71,12 +80,14 @@ public class PlayerBuffController : MonoBehaviour
     }
 
     public void ApplyTimedBuff(string buffId, float durationSeconds, float speedMultiplier, float jumpMultiplier,
-        float damageMultiplier = 1f, float fireRateMultiplier = 1f, string displayName = null)
+        float damageMultiplier = 1f, float fireRateMultiplier = 1f, string displayName = null,
+        bool drainWhileUsed = false)
     {
         EnsureResolvedMotor();
         if (motor != null && (baseSpeed < 0f || baseJump < 0f))
             CacheBaseValues();
 
+        float dur = Mathf.Max(0.01f, durationSeconds);
         ActiveBuff b = new ActiveBuff
         {
             displayName = string.IsNullOrWhiteSpace(displayName) ? buffId : displayName,
@@ -84,19 +95,53 @@ public class PlayerBuffController : MonoBehaviour
             jumpMult = Mathf.Max(0.01f, jumpMultiplier),
             damageMult = Mathf.Max(0.01f, damageMultiplier),
             fireRateMult = Mathf.Max(0.01f, fireRateMultiplier),
-            endTime = Time.time + Mathf.Max(0.01f, durationSeconds)
+            drainWhileUsed = drainWhileUsed,
+            remainingSeconds = drainWhileUsed ? dur : 0f,
+            endTime = drainWhileUsed ? float.PositiveInfinity : Time.time + dur
         };
 
         active[buffId] = b;
         NotifyPowerUpsChanged();
 
         if (logOnApply)
-            Debug.Log($"[Buff] {buffId}: spd x{b.speedMult}, jmp x{b.jumpMult}, dmg x{b.damageMult}, rof x{b.fireRateMult} ({durationSeconds}s)");
+            Debug.Log($"[Buff] {buffId}: spd x{b.speedMult}, jmp x{b.jumpMult}, dmg x{b.damageMult}, rof x{b.fireRateMult} ({durationSeconds}s{(drainWhileUsed ? ", drain while used" : "")})");
+    }
+
+    /// <summary>Drains remaining time on a drain-while-used buff (e.g. Rapid Fire while holding trigger).</summary>
+    public void ConsumeBuffTime(string buffId, float deltaSeconds)
+    {
+        if (string.IsNullOrEmpty(buffId) || deltaSeconds <= 0f)
+            return;
+        if (!active.TryGetValue(buffId, out ActiveBuff b) || !b.drainWhileUsed)
+            return;
+
+        int beforeCeil = Mathf.CeilToInt(b.remainingSeconds);
+        b.remainingSeconds -= deltaSeconds;
+        if (b.remainingSeconds <= 0f)
+        {
+            active.Remove(buffId);
+            ApplyCombinedBuffs();
+            NotifyPowerUpsChanged();
+            return;
+        }
+
+        active[buffId] = b;
+        if (Mathf.CeilToInt(b.remainingSeconds) != beforeCeil)
+            NotifyPowerUpsChanged();
     }
 
     public bool HasActiveBuff(string buffId)
     {
         return !string.IsNullOrEmpty(buffId) && active.ContainsKey(buffId);
+    }
+
+    public float GetBuffRemainingSeconds(string buffId)
+    {
+        if (!active.TryGetValue(buffId, out ActiveBuff b))
+            return 0f;
+        if (b.drainWhileUsed)
+            return Mathf.Max(0f, b.remainingSeconds);
+        return Mathf.Max(0f, b.endTime - Time.time);
     }
 
     public string[] GetActivePowerUpNames()
@@ -105,8 +150,12 @@ public class PlayerBuffController : MonoBehaviour
         foreach (var kvp in active)
         {
             string displayName = string.IsNullOrWhiteSpace(kvp.Value.displayName) ? kvp.Key : kvp.Value.displayName;
+            float remaining = kvp.Value.drainWhileUsed
+                ? kvp.Value.remainingSeconds
+                : (kvp.Value.endTime - Time.time);
+            int secs = Mathf.Max(0, Mathf.CeilToInt(remaining));
             if (!string.IsNullOrWhiteSpace(displayName))
-                names.Add(displayName);
+                names.Add($"{displayName} {secs}s");
         }
 
         names.Sort(StringComparer.Ordinal);
@@ -131,11 +180,9 @@ public class PlayerBuffController : MonoBehaviour
         EnsureResolvedMotor();
         if (motor == null) return;
 
-        // Cache base speed/jump once so we can always return to normal
         baseSpeed = ReadFirstFloat(motor, speedFieldCandidates, fallback: 6f);
         baseJump  = ReadFirstFloat(motor, jumpFieldCandidates,  fallback: 6f);
 
-        // If not found, keep fallback but still allow changes
         if (logOnApply)
             Debug.Log($"[Buff] Base cached: speed={baseSpeed}, jump={baseJump} (motor={motor.GetType().Name})");
     }
