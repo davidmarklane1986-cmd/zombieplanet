@@ -1,0 +1,12 @@
+---
+description: Spherical planet, gravity, flora orientation invariants
+globs: Assets/Stargrave/Scripts/**/*Planet*,Assets/Stargrave/Scripts/**/*Foliage*,Assets/Stargrave/Scripts/**/*Gravity*,Assets/Stargrave/Scripts/GpuGrassCarpet.cs,Assets/ThirdParty/SebLague/**
+alwaysApply: false
+---
+
+# Planet / flora gotchas
+
+- Characters/enemies: local **+Y** = away from planet center (`FromToRotation(Vector3.up, radial)` / `LookRotation(tangent, gravityUp)`).
+- Kenney grass clumps are often modeled **flat in XZ** (thin on Y) — use surface-normal align, not “lay flat” tip, or they stand on edge.
+- Prefer planet APIs (`GetBiomeColorAtPosition`, foliage greenness) over inventing color heuristics.
+- Heavy flora: avoid spawning tens of thousands of GameObjects; GPU instancing / carpets when density is the goal.

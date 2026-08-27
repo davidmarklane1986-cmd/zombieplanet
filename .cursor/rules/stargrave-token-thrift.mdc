@@ -1,0 +1,25 @@
+---
+description: Minimize tokens — scoped work, no re-discovery, no drive-by exploration
+alwaysApply: true
+---
+
+# Stargrave — cheap agent workflow
+
+## Defaults
+- One concrete goal per turn. Prefer a file/prefab name over a tour of the repo.
+- Do **not** re-explore systems already documented in sibling rules under `.cursor/rules/`.
+- Do **not** run full Kenny setup, play-mode tests, scene hierarchy dumps, or broad MCP probes unless the user asks.
+- Do **not** commit, push, or open PRs unless asked.
+- Prefer patching the smallest surface (one script / one prefab) over rebuild-everything menus.
+- After a fix: short verdict + what to re-test. No recap of prior chat.
+
+## Where code lives
+- Gameplay / systems: `Assets/Stargrave/Scripts/`
+- Prefabs: `Assets/Stargrave/Prefabs/`
+- Editor setup menus: `Assets/Stargrave/Scripts/Editor/` (`Tools/Stargrave/...`)
+- Third-party kits: `Assets/ThirdParty/` (Kenny path is spelled `Charecters`)
+- Active scene: `Assets/Scenes/SampleScene.unity`
+
+## Unity MCP
+- Use only when needed for a targeted check or apply. Prefer reading/editing files first.
+- After script edits: wait for compile; do not spam Setup menus while compiling.

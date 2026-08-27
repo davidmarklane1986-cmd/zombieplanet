@@ -1,0 +1,16 @@
+---
+description: Kenny zombie scale/orientation invariants
+globs: Assets/Stargrave/Scripts/**/*Zombie*,Assets/Stargrave/Scripts/Player/CharacterAlign.cs,Assets/Stargrave/Scripts/Editor/ZombieSetup.cs,Assets/Stargrave/Prefabs/Zombies/**
+alwaysApply: false
+---
+
+# Kenny / zombie gotchas
+
+- **Animator host**: on `CharacterModel` (not Root ×100). Clips remapped to `Root/HipsCtrl/...`. BuildGenericAvatar required.
+- **Scale**: Kenny embeds ×100 on `Root` / mesh. Fit via `FitModelHeight` on `CharacterModel` (~0.4). Never reset `CharacterModel.localScale` to 1 in `CharacterAlign`.
+- **`CharacterAlign`**: position + rotation only; optional `modelEulerOffset`. No scale writes.
+- **`ZombieAI`**: LateUpdate locks fitted visual scale; drives Animator `Speed`.
+- **`ZombieVisibilityCuller`**: toggles renderers only. `ZombieAI` enables Animator when shown + near player (`animateMaxDistance`), with `AlwaysAnimate` while playing (avoids frozen run pose).
+- Rebuild variants only when needed: `Tools/Stargrave/Setup Kenny Zombie Variants`.
+- After prefab rebuild: stop Play and restart to pick up changes.
+- Combat: set `moveSpeed` only; `ZombieSetup.BalanceFromSpeed` derives shots-to-kill + attack damage (faster = weaker).
