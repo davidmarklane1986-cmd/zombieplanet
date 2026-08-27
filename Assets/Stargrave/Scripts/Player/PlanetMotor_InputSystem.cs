@@ -70,6 +70,8 @@ public class PlanetMotor_InputSystem : MonoBehaviour
     [Tooltip("Log swim diagnostics ~2x/sec (ocean found?, ocean radius, distance from centre, depth, swim state). " +
              "Enable this if swimming isn't engaging and report the numbers.")]
     public bool debugSwim = false;
+    [Tooltip("Set by PlayerSwimStamina when empty (slower swim while drowning).")]
+    [HideInInspector] public float swimStaminaSpeedMultiplier = 1f;
 
     [Header("Footsteps")]
     [Tooltip("Play footstep SFX while grounded and moving. Distance-based, so cadence speeds up automatically when running.")]
@@ -97,6 +99,7 @@ public class PlanetMotor_InputSystem : MonoBehaviour
     Transform _planetCenter;
     GravityAttractor _gravityAttractor;
     CombatTargeting _combatTargeting;
+    PlayerSwimStamina _stamina;
     PlanetOceanLayer _ocean;
     bool _isSwimming;
     float _nextSwimLogTime;
@@ -104,7 +107,27 @@ public class PlanetMotor_InputSystem : MonoBehaviour
     /// <summary>True while the player is floating/swimming in water (rather than walking on land).</summary>
     public bool IsSwimming => _isSwimming;
 
+    /// <summary>True while seated in a boat — locomotion is suppressed; boat owns motion.</summary>
+    public bool IsInBoat => _inBoat;
+
+    bool _inBoat;
     bool _lockOnOrbitMoveEngaged;
+
+    public void SetInBoat(bool inBoat)
+    {
+        _inBoat = inBoat;
+        if (inBoat)
+        {
+            _isSwimming = false;
+            jumpQueued = false;
+            AudioManager.StopFootsteps();
+            if (rb != null && !rb.isKinematic)
+            {
+                rb.linearVelocity = Vector3.zero;
+                rb.angularVelocity = Vector3.zero;
+            }
+        }
+    }
 
     bool jumpQueued;
     float lastGroundedTime;
@@ -134,6 +157,13 @@ public class PlanetMotor_InputSystem : MonoBehaviour
     {
         if (_combatTargeting == null)
             TryGetComponent(out _combatTargeting);
+    }
+
+    bool CanUseStaminaSprint()
+    {
+        if (_stamina == null)
+            TryGetComponent(out _stamina);
+        return _stamina == null || _stamina.CanSprint;
     }
 
     /// <summary>True after the last FixedUpdate used lock-on orbit strafe for planar move.</summary>
@@ -270,8 +300,9 @@ public class PlanetMotor_InputSystem : MonoBehaviour
         }
 
         // Horizontal swim: drive tangent-plane velocity toward wishDir * swimSpeed (full control).
+        float speedMul = Mathf.Clamp(swimStaminaSpeedMultiplier, 0.05f, 1f);
         Vector3 lateral = Vector3.ProjectOnPlane(vel, up);
-        Vector3 target = wishDir * swimSpeed;
+        Vector3 target = wishDir * (swimSpeed * speedMul);
         rb.AddForce(target - lateral, ForceMode.VelocityChange);
     }
 
@@ -366,6 +397,14 @@ public class PlanetMotor_InputSystem : MonoBehaviour
         if (_gravityAttractor == null)
             CacheGravityAttractor();
 
+        if (_inBoat)
+        {
+            // Boat owns motion; keep swim state clear so stamina regenerates.
+            _isSwimming = false;
+            jumpQueued = false;
+            return;
+        }
+
         Vector3 pos = transform.position;
         Vector3 gravityUp = GravityUpFromPlanet(_planetCenter, pos);
         Vector3 up = transform.up;
@@ -394,8 +433,24 @@ public class PlanetMotor_InputSystem : MonoBehaviour
         bool sprintHeld =
             (Keyboard.current != null && Keyboard.current.leftShiftKey.isPressed) ||
             (Gamepad.current != null && Gamepad.current.leftStickButton.isPressed);
+        bool sprintRequest = sprintHeld && move.sqrMagnitude > 0.01f;
 
-        float speed = moveSpeed * externalSpeedMultiplier * (sprintHeld && move.sqrMagnitude > 0.01f ? sprintSpeedMultiplier : 1f);
+        float sprintBuff = 1f;
+        bool powerUpSprint = false;
+        if (sprintRequest)
+        {
+            PlayerBuffController buffs = GetComponent<PlayerBuffController>();
+            if (buffs != null && buffs.HasSprintActivatedSpeedBuff())
+            {
+                powerUpSprint = true;
+                sprintBuff = buffs.GetSprintActivatedSpeedMultiplier();
+                buffs.ConsumeBuffTime("PowerUp_Speed", Time.fixedDeltaTime);
+            }
+        }
+
+        bool sprinting = sprintRequest && (powerUpSprint || CanUseStaminaSprint());
+        float speed = moveSpeed * externalSpeedMultiplier * sprintBuff
+                      * (sprinting ? sprintSpeedMultiplier : 1f);
 
         Vector3 camF = cameraTransform ? cameraTransform.forward : transform.forward;
         Vector3 camR = cameraTransform ? cameraTransform.right : transform.right;

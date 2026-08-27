@@ -5,6 +5,7 @@ using UnityEngine.InputSystem;
 /// Plays Run_Front when you press WASD, Idle_Menu when you release.
 /// On Player root: finds Animator under child "CharacterModel" (cowboy). Assign Animator in Inspector to override.
 /// </summary>
+[DefaultExecutionOrder(200)]
 public class PlayerCharacterAnimator : MonoBehaviour
 {
     [Tooltip("Assign in Inspector to override. Otherwise auto-finds under child named 'CharacterModel'.")]
@@ -35,7 +36,12 @@ public class PlayerCharacterAnimator : MonoBehaviour
     bool _wasRunning;
     bool _wasWAndS;
 
+    public bool IsLocomotionRunning => _wasRunning;
+
     PlanetMotor_InputSystem _motor;
+    KennyLocomotionDriver _kennyLoco;
+    PlayerCharacterLoadout _loadout;
+    bool _correctKennyRunFacing;
 
     int ResolveStateHash(string name, out string resolvedName)
     {
@@ -97,29 +103,84 @@ public class PlayerCharacterAnimator : MonoBehaviour
                 if (_animator != null) break;
             }
         }
-        if (_animator != null)
+        BindKennyDriver(null);
+        RefreshStateHashes();
+    }
+
+    void BindKennyDriver(Transform modelRoot)
+    {
+        _kennyLoco = null;
+        if (modelRoot != null)
+            _kennyLoco = modelRoot.GetComponentInChildren<KennyLocomotionDriver>(true);
+        if (_kennyLoco == null && _animator != null)
+            _kennyLoco = _animator.GetComponent<KennyLocomotionDriver>();
+        if (_kennyLoco == null)
         {
-            _idleHash = ResolveStateHash(idleStateName, out _idleResolvedName);
-            _runHash = ResolveStateHash(runStateName, out _runResolvedName);
-            _runBackHash = ResolveStateHash(runBackStateName, out _runBackResolvedName);
-            _deathHash = ResolveStateHash(deathStateName, out _deathResolvedName);
-            if (debugLog) Debug.Log($"[PlayerCharacterAnimator] Found Animator on {_animator.gameObject.name}");
-            if (debugLog && !_animator.HasState(_layer, _idleHash))
-                Debug.LogWarning($"[PlayerCharacterAnimator] Idle state not found: {idleStateName}");
-            if (debugLog && !_animator.HasState(_layer, _runHash))
-                Debug.LogWarning($"[PlayerCharacterAnimator] Run state not found: {runStateName}");
-            if (debugLog && !_animator.HasState(_layer, _runBackHash))
-                Debug.LogWarning($"[PlayerCharacterAnimator] Run back state not found: {runBackStateName}");
-            if (debugLog && !_animator.HasState(_layer, _deathHash))
-                Debug.LogWarning($"[PlayerCharacterAnimator] Death state not found: {deathStateName}");
+            var model = transform.Find("CharacterModel");
+            if (model != null)
+                _kennyLoco = model.GetComponentInChildren<KennyLocomotionDriver>(true);
         }
+    }
+
+    void RefreshStateHashes()
+    {
+        if (_animator == null)
+            return;
+        _idleHash = ResolveStateHash(idleStateName, out _idleResolvedName);
+        _runHash = ResolveStateHash(runStateName, out _runResolvedName);
+        _runBackHash = ResolveStateHash(runBackStateName, out _runBackResolvedName);
+        _deathHash = ResolveStateHash(deathStateName, out _deathResolvedName);
+        if (debugLog) Debug.Log($"[PlayerCharacterAnimator] Found Animator on {_animator.gameObject.name}");
+        if (debugLog && !_animator.HasState(_layer, _idleHash))
+            Debug.LogWarning($"[PlayerCharacterAnimator] Idle state not found: {idleStateName}");
+        if (debugLog && !_animator.HasState(_layer, _runHash))
+            Debug.LogWarning($"[PlayerCharacterAnimator] Run state not found: {runStateName}");
+        if (debugLog && !_animator.HasState(_layer, _runBackHash))
+            Debug.LogWarning($"[PlayerCharacterAnimator] Run back state not found: {runBackStateName}");
+        if (debugLog && !_animator.HasState(_layer, _deathHash))
+            Debug.LogWarning($"[PlayerCharacterAnimator] Death state not found: {deathStateName}");
     }
 
     void Awake()
     {
         _layer = 0;
         _motor = GetComponent<PlanetMotor_InputSystem>();
+        _loadout = GetComponent<PlayerCharacterLoadout>();
         CacheAnimator();
+        CacheKennyFacing();
+    }
+
+    void CacheKennyFacing()
+    {
+        _correctKennyRunFacing = false;
+        if (_loadout == null)
+            _loadout = GetComponent<PlayerCharacterLoadout>();
+        PlayableCharacterDef def = _loadout != null ? _loadout.AppliedCharacter : null;
+        if (def == null || string.IsNullOrEmpty(def.id))
+            return;
+        _correctKennyRunFacing = !def.id.Equals("cowboy", System.StringComparison.OrdinalIgnoreCase);
+    }
+
+    /// <summary>Re-find Animator under CharacterModel after a visual swap and refresh state hashes.</summary>
+    public void RebindToModel(Transform modelRoot = null)
+    {
+        _animator = null;
+        animator = null;
+        _kennyLoco = null;
+        if (modelRoot != null)
+            _animator = modelRoot.GetComponentInChildren<Animator>(true);
+        if (_animator == null)
+            CacheAnimator();
+        else
+        {
+            BindKennyDriver(modelRoot);
+            RefreshStateHashes();
+        }
+        _wasRunning = false;
+        _wasWAndS = false;
+        CacheKennyFacing();
+        if (_kennyLoco == null && _animator != null && _animator.HasState(_layer, _idleHash))
+            _animator.Play(_idleHash, _layer, 0f);
     }
 
     bool HasMoveInput()
@@ -133,6 +194,13 @@ public class PlayerCharacterAnimator : MonoBehaviour
         if (Gamepad.current != null && Gamepad.current.leftStick.ReadValue().sqrMagnitude > 0.04f)
             return true;
         return false;
+    }
+
+    bool HasLocomotionMoveInput()
+    {
+        if (_motor != null && _motor.IsInBoat)
+            return false;
+        return HasMoveInput();
     }
 
     /// <summary>True when moving backward (S, S+A, or S+D). Used to pick Run_Back vs Run_Front.</summary>
@@ -190,6 +258,18 @@ public class PlayerCharacterAnimator : MonoBehaviour
     void Update()
     {
         if (_animator == null) CacheAnimator();
+        if (_animator == null && _kennyLoco == null) return;
+
+        if (_kennyLoco != null)
+        {
+            bool moving = HasLocomotionMoveInput();
+            float nominal = _motor != null ? Mathf.Max(0.5f, _motor.moveSpeed) : 8f;
+            float planar = moving ? nominal : 0f;
+            _kennyLoco.SetLocomotion(planar, nominal, animate: true);
+            _wasRunning = moving;
+            return;
+        }
+
         if (_animator == null) return;
         if (!_animator.isInitialized) return;
 
@@ -206,7 +286,7 @@ public class PlayerCharacterAnimator : MonoBehaviour
         }
         _wasWAndS = false;
 
-        bool running = HasMoveInput();
+        bool running = HasLocomotionMoveInput();
         bool backward = IsBackwardInput();
         bool useRunBack = running && backward && _animator.HasState(_layer, _runBackHash);
         int runHash = useRunBack ? _runBackHash : _runHash;
@@ -227,6 +307,48 @@ public class PlayerCharacterAnimator : MonoBehaviour
             else if (state.normalizedTime >= 1f)
                 _animator.Play(runHash, _layer, 0f);
         }
+    }
+
+    void LateUpdate()
+    {
+        AlignKennyLegsForward();
+    }
+
+    /// <summary>
+    /// Farmer run clips retargeted onto Kenny twist the hips/legs off capsule forward.
+    /// Yaw hips so the left-right leg axis is square to movement. Fixed-degree offsets made this worse.
+    /// </summary>
+    void AlignKennyLegsForward()
+    {
+        if (!_correctKennyRunFacing || !_wasRunning || _animator == null || !_animator.isHuman)
+            return;
+
+        Transform hips = _animator.GetBoneTransform(HumanBodyBones.Hips);
+        Transform leftLeg = _animator.GetBoneTransform(HumanBodyBones.LeftUpperLeg);
+        Transform rightLeg = _animator.GetBoneTransform(HumanBodyBones.RightUpperLeg);
+        if (hips == null || leftLeg == null || rightLeg == null)
+            return;
+
+        Vector3 up = transform.up;
+        Vector3 want = Vector3.ProjectOnPlane(transform.forward, up);
+        if (want.sqrMagnitude < 1e-6f)
+            return;
+        want.Normalize();
+
+        Vector3 across = Vector3.ProjectOnPlane(rightLeg.position - leftLeg.position, up);
+        if (across.sqrMagnitude < 1e-8f)
+            return;
+        Vector3 hipFwd = Vector3.Cross(up, across.normalized);
+        if (hipFwd.sqrMagnitude < 1e-8f)
+            return;
+        hipFwd.Normalize();
+        if (Vector3.Dot(hipFwd, want) < 0f)
+            hipFwd = -hipFwd;
+
+        float yaw = Vector3.SignedAngle(hipFwd, want, up);
+        if (Mathf.Abs(yaw) < 0.2f)
+            return;
+        hips.Rotate(up, yaw, Space.World);
     }
 
     /// <summary>Called by <see cref="PlayerHealth"/> when the player dies from damage (not W+S debug).</summary>

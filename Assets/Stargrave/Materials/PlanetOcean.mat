@@ -39,8 +39,6 @@ Material:
     - _FresnelPower: 4
     - _FresnelStrength: 0.35
     - _Smoothness: 0.92
-    - _WaterLightWrap: 0.25
-    - _WaterMinLight: 0.18
     - _WaveFadeDistance: 280
     - _WaveHeight: 1.1
     - _WaveNormalScale: 22

@@ -9,12 +9,12 @@ using UnityEditor;
 /// Spherical ocean for a procedural planet (URP). Builds a transparent sphere "shell" at the
 /// ocean radius and feeds the planet centre + ocean radius to the <c>Stargrave/Planet Ocean</c>
 /// shader, which performs Sebastian Lague's per-pixel ray-sphere + scene-depth ocean entirely in
-/// the fragment stage (shallow/deep blend, soft shoreline, sun specular, triplanar waves, and a
-/// day/night terminator that matches the terrain).
+/// the fragment stage (shallow/deep blend, soft shoreline, sun/moon specular, triplanar waves).
 ///
 /// Mirrors <see cref="PlanetAtmosphereLayer"/>: a single managed child shell, sized from the
-/// Planet's base radius, with geometry uniforms pushed every frame. The sun is read in-shader via
-/// URP <c>GetMainLight()</c>, so no light wiring is needed here.
+/// Planet's base radius, with geometry uniforms pushed every frame. Day lighting comes from
+/// URP <c>GetMainLight()</c> (the sun); night lighting comes from additional lights (moon).
+/// There is no separate night brightness floor on the water.
 /// </summary>
 [ExecuteAlways]
 [DisallowMultipleComponent]

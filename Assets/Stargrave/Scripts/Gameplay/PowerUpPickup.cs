@@ -269,7 +269,7 @@ public class PowerUpPickup : MonoBehaviour
         switch (kind)
         {
             case Kind.SpeedBoost:
-                ApplyBuff(playerRoot, "PowerUp_Speed", "Speed Boost", d, m, 1f, 1f, 1f);
+                ApplyBuff(playerRoot, "PowerUp_Speed", "Speed Boost", d, m, 1f, 1f, 1f, drainWhileUsed: true);
                 break;
             case Kind.JumpBoost:
                 ApplyBuff(playerRoot, "PowerUp_Jump", "Jump Boost", d, 1f, m, 1f, 1f);
@@ -284,7 +284,7 @@ public class PowerUpPickup : MonoBehaviour
                 int resolvedHeal = healAmount;
                 if (healFractionOfMaxHealth > 0f)
                     resolvedHeal = Mathf.Max(resolvedHeal, Mathf.CeilToInt(health.maxHealth * healFractionOfMaxHealth));
-                health.Heal(resolvedHeal);
+                health.StoreHealthPack(resolvedHeal);
                 break;
             case Kind.Shield:
                 health.ExtendInvulnerability(d);

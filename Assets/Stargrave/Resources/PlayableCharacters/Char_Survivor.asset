@@ -1,0 +1,29 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 2ecfbaf62f5d30a448607b9546e363f2, type: 3}
+  m_Name: Char_Survivor
+  m_EditorClassIdentifier: Assembly-CSharp::PlayableCharacterDef
+  id: survivor
+  displayName: Survivor
+  blurb: Tough as nails. A bit slower on the draw.
+  moveSpeed: 7.6
+  sprintMultiplier: 1.4
+  assignedWeapon: {fileID: 11400000, guid: dddd1b67a8d140c8b489f63193a74ce1, type: 2}
+  maxHealth: 130
+  characterPrefab: {fileID: 3441754816540679306, guid: a3db9a6025f065d49a287ace2abea76d, type: 3}
+  modelYawOffsetDegrees: 0
+  hipsYawOffsetDegrees: 0
+  accentColor: {r: 0.75, g: 0.55, b: 0.35, a: 1}
+  idleStateName: root|Idle_Menu
+  runStateName: root|Run_Front
+  runBackStateName: root|Run_Back
+  deathStateName: root|Death

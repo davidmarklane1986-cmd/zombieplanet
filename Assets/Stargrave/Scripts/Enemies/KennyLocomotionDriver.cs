@@ -23,21 +23,39 @@ public sealed class KennyLocomotionDriver : MonoBehaviour
     AnimationClipPlayable _runPlayable;
     bool _graphReady;
     bool _moving;
+    Vector3 _lockedLocalScale = Vector3.one;
+    bool _hasLockedLocalScale;
+    RuntimeAnimatorController _savedController;
+
+    /// <summary>Controller cleared for Playables; used when stripping this driver for Mecanim.</summary>
+    public RuntimeAnimatorController SavedController => _savedController;
 
     void Awake()
     {
         _animator = GetComponent<Animator>();
         if (_animator != null)
         {
+            _savedController = _animator.runtimeAnimatorController;
             _animator.applyRootMotion = false;
             _animator.cullingMode = AnimatorCullingMode.AlwaysAnimate;
             _animator.runtimeAnimatorController = null;
         }
+        CacheLockedScale();
     }
 
     void OnEnable()
     {
+        CacheLockedScale();
         BuildGraph();
+    }
+
+    void LateUpdate()
+    {
+        // Kenny clips often key empty-path m_LocalScale=100 (FBX root). That overwrites
+        // FitModelHeight / FitVisualHeight on the Animator host — re-assert the fitted scale.
+        if (_hasLockedLocalScale &&
+            (transform.localScale - _lockedLocalScale).sqrMagnitude > 1e-6f)
+            transform.localScale = _lockedLocalScale;
     }
 
     void OnDisable()
@@ -48,6 +66,23 @@ public sealed class KennyLocomotionDriver : MonoBehaviour
     void OnDestroy()
     {
         TeardownGraph();
+    }
+
+    void CacheLockedScale()
+    {
+        Vector3 s = transform.localScale;
+        // Clip may already have forced ×100 onto the host — restore a Kenny human fit (~farmer height).
+        if (s.x > 20f || s.y > 20f || s.z > 20f)
+        {
+            _lockedLocalScale = Vector3.one * 0.42f;
+            _hasLockedLocalScale = true;
+            transform.localScale = _lockedLocalScale;
+            return;
+        }
+        if (s.x < 1e-4f)
+            return;
+        _lockedLocalScale = s;
+        _hasLockedLocalScale = true;
     }
 
     public void SetLocomotion(float planarSpeed, float nominalMoveSpeed, bool animate)
@@ -88,6 +123,12 @@ public sealed class KennyLocomotionDriver : MonoBehaviour
         _runPlayable.SetSpeed(speed);
     }
 
+    /// <summary>Call after assigning idleClip/runClip when the component was added at runtime.</summary>
+    public void RebuildGraph()
+    {
+        BuildGraph();
+    }
+
     void BuildGraph()
     {
         TeardownGraph();
@@ -111,6 +152,8 @@ public sealed class KennyLocomotionDriver : MonoBehaviour
 
         _animator.applyRootMotion = false;
         _animator.cullingMode = AnimatorCullingMode.AlwaysAnimate;
+        if (_savedController == null)
+            _savedController = _animator.runtimeAnimatorController;
         _animator.runtimeAnimatorController = null;
         _animator.enabled = true;
 

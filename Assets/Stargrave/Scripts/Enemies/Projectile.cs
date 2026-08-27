@@ -21,12 +21,12 @@ public class Projectile : MonoBehaviour
     public bool applyTintToRenderer = true;
     public Color tintColor = new Color(1f, 0.55f, 0.08f, 1f);
     [Tooltip("URP Lit: scales _EmissionColor when the property exists. Set 0 to skip emission.")]
-    public float emissionBoost = 2.5f;
+    public float emissionBoost = 4f;
 
     [Header("Visual — trail")]
     public bool enableTrail = true;
-    public float trailTime = 0.22f;
-    public float trailStartWidth = 0.14f;
+    public float trailTime = 0.32f;
+    public float trailStartWidth = 0.22f;
     public float trailEndWidth = 0.02f;
 
     [Header("Visual — impact")]
@@ -42,17 +42,59 @@ public class Projectile : MonoBehaviour
     [Tooltip("Destroy the projectile when it hits something that is not ignored and is not a zombie (terrain, props, etc.).")]
     public bool despawnOnWorldHit = true;
 
+    [Header("Falloff")]
+    public bool useDamageFalloff;
+    public float damageFalloffStart = 18f;
+    public float damageFalloffEnd = 50f;
+    [Range(0.05f, 1f)] public float damageFalloffMinMultiplier = 0.4f;
+
     float _spawnTime;
+    Vector3 _spawnPosition;
+    int _baseDamage;
 
     void Awake()
     {
+        _spawnPosition = transform.position;
+        _baseDamage = damage;
         ApplyTintToMesh();
     }
 
     void Start()
     {
         _spawnTime = Time.time;
+        _spawnPosition = transform.position;
         ConfigureTrail();
+    }
+
+    public void ConfigureFromWeapon(Color tint, int baseDamage, bool falloff,
+        float falloffStart, float falloffEnd, float falloffMinMult)
+    {
+        _baseDamage = Mathf.Max(0, baseDamage);
+        damage = _baseDamage;
+        useDamageFalloff = falloff && _baseDamage > 0;
+        damageFalloffStart = falloffStart;
+        damageFalloffEnd = Mathf.Max(falloffStart + 0.01f, falloffEnd);
+        damageFalloffMinMultiplier = Mathf.Clamp(falloffMinMult, 0.05f, 1f);
+        SetTint(tint);
+        // Trail is often created in Start; rebuild now so weapon colour shows on first frame.
+        if (enableTrail)
+            ConfigureTrail();
+    }
+
+    int GetDamageAtPoint(Vector3 hitPoint)
+    {
+        if (_baseDamage <= 0)
+            return 0;
+        if (!useDamageFalloff)
+            return _baseDamage;
+
+        float dist = Vector3.Distance(_spawnPosition, hitPoint);
+        if (dist <= damageFalloffStart)
+            return _baseDamage;
+
+        float t = Mathf.InverseLerp(damageFalloffStart, damageFalloffEnd, dist);
+        float mult = Mathf.Lerp(1f, damageFalloffMinMultiplier, t);
+        return Mathf.Max(1, Mathf.RoundToInt(_baseDamage * mult));
     }
 
     void ApplyTintToMesh()
@@ -71,6 +113,24 @@ public class Projectile : MonoBehaviour
         {
             m.EnableKeyword("_EMISSION");
             m.SetColor(EmissionColorId, tintColor * emissionBoost);
+        }
+    }
+
+    /// <summary>Runtime tint override (weapon colour). Re-applies mesh + trail if already configured.</summary>
+    public void SetTint(Color color)
+    {
+        tintColor = color;
+        ApplyTintToMesh();
+        var trail = GetComponent<TrailRenderer>();
+        if (trail != null && trail.material != null)
+        {
+            Material mat = trail.material;
+            if (mat.HasProperty(BaseColorId))
+                mat.SetColor(BaseColorId, tintColor);
+            else
+                mat.color = tintColor;
+            trail.startColor = new Color(1f, 1f, 1f, 0.9f);
+            trail.endColor = new Color(tintColor.r, tintColor.g, tintColor.b, 0f);
         }
     }
 
@@ -181,9 +241,10 @@ public class Projectile : MonoBehaviour
             return false;
 
         // damage <= 0 means visual-only bolt (crosshair already applied the hit).
-        if (damage > 0)
+        int dmg = GetDamageAtPoint(hitPoint);
+        if (dmg > 0)
         {
-            zombie.TakeDamage(damage);
+            zombie.TakeDamage(dmg);
             PlayerShooting.NotifyHitConfirmed();
         }
 

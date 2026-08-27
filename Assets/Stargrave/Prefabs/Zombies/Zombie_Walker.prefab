@@ -649,6 +649,7 @@ GameObject:
   - component: {fileID: 580998019912044844}
   - component: {fileID: 3061721224568662315}
   - component: {fileID: 7410527610587520554}
+  - component: {fileID: 2123319855013759520}
   m_Layer: 0
   m_Name: CharacterModel
   m_TagString: Untagged
@@ -682,8 +683,8 @@ Animator:
   m_PrefabAsset: {fileID: 0}
   m_GameObject: {fileID: 3240984512266431427}
   m_Enabled: 1
-  m_Avatar: {fileID: 9000000, guid: dde3a963fdba2f54e9036e4e0a1d93d4, type: 2}
-  m_Controller: {fileID: 9100000, guid: 79887cd82ee2bc44db22bbaf8df71277, type: 2}
+  m_Avatar: {fileID: 9000000, guid: 18f171121132ea84ea6c561add1549ab, type: 3}
+  m_Controller: {fileID: 9100000, guid: a1cfb5bd4fb091f4aa7864e666c67065, type: 2}
   m_CullingMode: 0
   m_UpdateMode: 0
   m_ApplyRootMotion: 0
@@ -711,6 +712,18 @@ MonoBehaviour:
   idleStateName: Idle
   walkStateName: Walk
   moveThreshold: 0.15
+--- !u!114 &2123319855013759520
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 3240984512266431427}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: f8adfb15bf981084aa78a43f2baaf4eb, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::FittedVisualScaleLock
 --- !u!1 &3419681144718284593
 GameObject:
   m_ObjectHideFlags: 0
@@ -1035,6 +1048,11 @@ MonoBehaviour:
   sfxMixerGroup: {fileID: 0}
   hitVfxPrefab: {fileID: 0}
   deathVfxPrefab: {fileID: 0}
+  deathFallHoldSeconds: 1.35
+  proceduralFallSeconds: 0.85
+  deathSinkDistance: 2.8
+  deathSinkSeconds: 35
+  deathSurfaceClearance: 0.01
   animator: {fileID: 3061721224568662315}
   locomotion: {fileID: 0}
   locomotionIdle: {fileID: 0}
@@ -1138,7 +1156,7 @@ Transform:
   m_PrefabAsset: {fileID: 0}
   m_GameObject: {fileID: 4542820597220422435}
   serializedVersion: 2
-  m_LocalRotation: {x: 0.00073369127, y: 0.0047674924, z: -0.04707186, w: 0.99887985}
+  m_LocalRotation: {x: 0.0007336912, y: 0.0047674924, z: -0.047071856, w: 0.99887985}
   m_LocalPosition: {x: 1.5366822e-10, y: 0.004707749, z: 0.0000000024519977}
   m_LocalScale: {x: 1, y: 1, z: 1.0000001}
   m_ConstrainProportionsScale: 0
@@ -1331,7 +1349,7 @@ Transform:
   m_PrefabAsset: {fileID: 0}
   m_GameObject: {fileID: 5803778038173437979}
   serializedVersion: 2
-  m_LocalRotation: {x: -0.015675768, y: 0.0011517383, z: 0.9946256, w: -0.10233646}
+  m_LocalRotation: {x: -0.015675768, y: 0.0011517382, z: 0.9946256, w: -0.10233645}
   m_LocalPosition: {x: -0.0002867288, y: 0.0030693286, z: -0.000007687028}
   m_LocalScale: {x: 0.99999344, y: 0.99999994, z: 1}
   m_ConstrainProportionsScale: 0
@@ -1709,7 +1727,7 @@ SkinnedMeshRenderer:
   m_Quality: 0
   m_UpdateWhenOffscreen: 1
   m_SkinnedMotionVectors: 1
-  m_Mesh: {fileID: -4910155946660035214, guid: 5f5df5cf1a1330741ad14222b8982f36, type: 3}
+  m_Mesh: {fileID: -4910155946660035214, guid: 18f171121132ea84ea6c561add1549ab, type: 3}
   m_Bones:
   - {fileID: 421015709167261844}
   - {fileID: 1633256643679411618}
@@ -2110,7 +2128,7 @@ Transform:
   m_PrefabAsset: {fileID: 0}
   m_GameObject: {fileID: 7987418937490821388}
   serializedVersion: 2
-  m_LocalRotation: {x: 0.030971779, y: 0.030524252, z: -0.0008921604, w: 0.99905366}
+  m_LocalRotation: {x: 0.030971777, y: 0.030524252, z: -0.00089216034, w: 0.99905366}
   m_LocalPosition: {x: -3.7252902e-11, y: 0.0010213042, z: -0.0000000034901313}
   m_LocalScale: {x: 0.9999997, y: 1.0000004, z: 1}
   m_ConstrainProportionsScale: 0

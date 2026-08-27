@@ -32,6 +32,11 @@ Shader "Stargrave/Space Skybox"
         // _SunDirection is intentionally NOT a material property; it is driven globally
         // (Shader.SetGlobalVector("_SunDirection", -sun.forward)) by PlanetDayNightCycle.cs
         // so the visible sun always follows the rotating directional light.
+
+        [Header(Moon)]
+        [HDR] _MoonColor ("Moon Color (HDR)", Color) = (1.6, 1.75, 2.1, 1)
+        _MoonSize ("Moon Size (angular)", Range(0.0003, 0.08)) = 0.0009
+        // _MoonDirection, _SkyMoonColor, _SkyMoonAmount driven globally by PlanetDayNightCycle.cs
     }
 
     SubShader
@@ -80,10 +85,19 @@ Shader "Stargrave/Space Skybox"
 
             // Set globally each frame by PlanetDayNightCycle.cs (direction TOWARD the sun, world space).
             float4 _SunDirection;
+            // Live disc tint (HDR). a>0 when driven by PlanetDayNightCycle; else use material _SunColor.
+            float4 _SkySunColor;
+            float _PlayerTwilight;
             half4 _SunColor;
             float _SunSize;
             float _SunGlowSize;
             float _SunGlowStrength;
+
+            float4 _MoonDirection;
+            float4 _SkyMoonColor;
+            float _SkyMoonAmount;
+            half4 _MoonColor;
+            float _MoonSize;
 
             v2f vert(appdata v)
             {
@@ -241,15 +255,38 @@ Shader "Stargrave/Space Skybox"
                 {
                     sunDir /= sunLen;
                     float d = dot(dir, sunDir);
+                    float golden = saturate(_PlayerTwilight);
+
+                    float3 sunRgb = _SunColor.rgb;
+                    if (_SkySunColor.a > 0.01)
+                        sunRgb = _SkySunColor.rgb;
 
                     // Crisp-but-soft disc: edge softens over the inner ~half of _SunSize.
                     float disc = smoothstep(1.0 - _SunSize, 1.0 - _SunSize * 0.5, d);
 
-                    // Wider halo that falls off smoothly around the disc.
-                    float glow = smoothstep(1.0 - _SunGlowSize, 1.0, d);
-                    glow = pow(glow, 2.0) * _SunGlowStrength;
+                    // Wider warm halo at sunrise / sunset.
+                    float glowSize = lerp(_SunGlowSize, max(_SunGlowSize * 4.0, 0.1), golden);
+                    float glowStr = lerp(_SunGlowStrength, _SunGlowStrength * 1.45, golden);
+                    float glow = smoothstep(1.0 - glowSize, 1.0, d);
+                    glow = pow(glow, lerp(2.0, 1.35, golden)) * glowStr;
 
-                    col += _SunColor.rgb * (disc + glow);
+                    col += sunRgb * (disc + glow);
+                }
+
+                float3 moonDir = _MoonDirection.xyz;
+                float moonLen = length(moonDir);
+                float moonVis = saturate(_SkyMoonAmount);
+                if (moonLen > 0.5 && moonVis > 0.001)
+                {
+                    moonDir /= moonLen;
+                    float md = dot(dir, moonDir);
+
+                    float3 moonRgb = _MoonColor.rgb;
+                    if (_SkyMoonColor.a > 0.01)
+                        moonRgb = _SkyMoonColor.rgb;
+
+                    float moonDisc = smoothstep(1.0 - _MoonSize, 1.0 - _MoonSize * 0.55, md);
+                    col += moonRgb * moonDisc * moonVis;
                 }
 
                 return half4(col, 1.0);

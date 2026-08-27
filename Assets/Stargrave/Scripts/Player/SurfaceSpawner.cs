@@ -2,7 +2,7 @@ using UnityEngine;
 using System.Collections;
 
 /// <summary>
-/// Places this object on the planet surface at a random point after the planet has generated.
+/// Places this object on dry planet land after the planet has generated.
 /// Uses Rigidbody.position so physics respects the spawn. Add to the Player (same object as Rigidbody).
 /// </summary>
 [RequireComponent(typeof(Rigidbody))]
@@ -15,10 +15,14 @@ public class SurfaceSpawner : MonoBehaviour
     [Header("Spawn")]
     [Tooltip("World units above the surface hit point.")]
     public float heightAboveSurface = 2f;
-    [Tooltip("Only spawn on terrain higher than the base planet radius (e.g. hills, not valleys/water level).")]
+    [Tooltip("Extra world units above sea level so feet stay dry.")]
+    [Min(0f)] public float spawnDryClearance = 1.25f;
+    [Tooltip("Prefer terrain above the planet base radius (hills) in addition to being above water.")]
     public bool onlyOnElevatedTerrain = true;
-    [Tooltip("Max attempts to find an elevated spawn point before using any hit.")]
-    public int maxElevatedAttempts = 50;
+    [Tooltip("Max attempts to find a dry (and optionally elevated) spawn before accepting any dry land.")]
+    public int maxElevatedAttempts = 80;
+    [Tooltip("Fallback shell radius when planet mesh / analytic surface is unavailable.")]
+    public float fallbackShellRadius = 120f;
 
     Rigidbody _rb;
 
@@ -34,23 +38,8 @@ public class SurfaceSpawner : MonoBehaviour
 
     IEnumerator SpawnWhenReady()
     {
-        // Find planet
-        if (planet == null)
-        {
-            var go = GameObject.FindGameObjectWithTag("Planet");
-            if (go != null) planet = go.transform;
-            if (planet == null)
-            {
-                var p = Object.FindFirstObjectByType<Planet>();
-                if (p != null) planet = p.transform;
-            }
-        }
-
-        if (planet == null)
-        {
-            Debug.LogError("SurfaceSpawner: No planet found (tag Planet or Planet component).");
+        if (!ResolvePlanet())
             yield break;
-        }
 
         Planet planetComp = planet.GetComponent<Planet>();
         if (planetComp != null)
@@ -61,73 +50,142 @@ public class SurfaceSpawner : MonoBehaviour
         yield return null;
         yield return new WaitForSeconds(0.2f);
 
-        Vector3 center = planet.position;
-        float maxRadius = 100f;
-        float baseRadius = 100f;
-        if (planetComp != null && planetComp.shapeSettings != null)
-        {
-            maxRadius = planetComp.GetMaxSurfaceRadiusWorld();
-            baseRadius = planetComp.GetBaseRadiusWorld();
-        }
-        if (maxRadius < 10f)
-            maxRadius = (planetComp != null && planetComp.shapeSettings != null) ? planetComp.shapeSettings.planetRadius * Mathf.Max(planet.lossyScale.x, planet.lossyScale.y, planet.lossyScale.z) : 100f;
-        if (maxRadius < 10f) maxRadius = 100f;
-        if (baseRadius < 10f) baseRadius = maxRadius * 0.95f;
+        if (!TryPickRandomSurface(out Vector3 spawnPos, out Quaternion spawnRot))
+            yield break;
 
-        Vector3 dir = Random.onUnitSphere.normalized;
-        Vector3 surfacePoint = center + dir * maxRadius;
-        Vector3 up = dir;
-
-        if (planetComp != null)
-        {
-            float rayMargin = Mathf.Max(150f, maxRadius * 0.5f);
-            int attempts = 0;
-            bool foundElevated = false;
-            while (attempts < maxElevatedAttempts)
-            {
-                dir = Random.onUnitSphere.normalized;
-                if (planetComp.TryGetSurfacePoint(dir, groundMask, rayMargin, out surfacePoint, out up))
-                {
-                    float distFromCenter = (surfacePoint - center).magnitude;
-                    if (!onlyOnElevatedTerrain || distFromCenter >= baseRadius)
-                    {
-                        foundElevated = true;
-                        break;
-                    }
-                }
-                attempts++;
-                if (onlyOnElevatedTerrain && attempts < maxElevatedAttempts)
-                    yield return null;
-            }
-            if (!foundElevated)
-            {
-                if (planetComp.TryGetSurfacePoint(Random.onUnitSphere.normalized, groundMask, rayMargin, out surfacePoint, out up))
-                {
-                    // Use last attempt
-                }
-                else
-                {
-                    surfacePoint = center + dir * maxRadius;
-                    up = dir;
-                }
-            }
-        }
-
-        Vector3 spawnPos = surfacePoint + up * heightAboveSurface;
-        Quaternion spawnRot = Quaternion.FromToRotation(Vector3.up, up);
-
-        _rb.linearVelocity = Vector3.zero;
-        _rb.angularVelocity = Vector3.zero;
-        _rb.position = spawnPos;
-        _rb.rotation = spawnRot;
-        transform.position = spawnPos;
-        transform.rotation = spawnRot;
-
+        ApplyPose(spawnPos, spawnRot);
         yield return new WaitForFixedUpdate();
-        _rb.position = spawnPos;
-        _rb.rotation = spawnRot;
-        _rb.linearVelocity = Vector3.zero;
-        _rb.angularVelocity = Vector3.zero;
+        ApplyPose(spawnPos, spawnRot);
+    }
+
+    /// <summary>
+    /// Immediately moves to a new random dry surface point and updates <see cref="PlayerHealth"/> spawn.
+    /// Planet must already be generated (true after boot).
+    /// </summary>
+    public bool RelocateToRandomSurface()
+    {
+        if (!ResolvePlanet())
+            return false;
+        if (!TryPickRandomSurface(out Vector3 spawnPos, out Quaternion spawnRot))
+            return false;
+        ApplyPose(spawnPos, spawnRot);
+        if (TryGetComponent(out PlayerHealth health))
+            health.SetSpawnPose(spawnPos, spawnRot);
+        return true;
+    }
+
+    bool ResolvePlanet()
+    {
+        if (planet == null)
+        {
+            var go = GameObject.FindGameObjectWithTag("Planet");
+            if (go != null)
+                planet = go.transform;
+            if (planet == null)
+            {
+                var p = Object.FindFirstObjectByType<Planet>();
+                if (p != null)
+                    planet = p.transform;
+            }
+        }
+
+        if (planet == null)
+        {
+            Debug.LogError("SurfaceSpawner: No planet found (tag Planet or Planet component).");
+            return false;
+        }
+        return true;
+    }
+
+    bool TryPickRandomSurface(out Vector3 spawnPos, out Quaternion spawnRot)
+    {
+        spawnPos = transform.position;
+        spawnRot = transform.rotation;
+
+        Planet planetComp = planet.GetComponent<Planet>();
+        PlanetOceanLayer ocean = planet.GetComponent<PlanetOceanLayer>();
+        if (ocean == null)
+            ocean = Object.FindFirstObjectByType<PlanetOceanLayer>();
+
+        Vector3 center = planet.position;
+        MeshCollider planetCollider = ZombieAI.ResolvePrimaryTerrainMeshCollider(planet);
+
+        float baseRadius = planetComp != null ? planetComp.GetBaseRadiusWorld() : 0f;
+        float waterLine = ResolveWaterLine(planetComp, ocean, spawnDryClearance);
+        int attempts = Mathf.Max(16, maxElevatedAttempts);
+
+        Vector3 bestDry = default;
+        bool foundDry = false;
+
+        for (int i = 0; i < attempts; i++)
+        {
+            Vector3 candidate = PlanetSurfaceSampler.GetDrySurfacePosition(
+                Random.onUnitSphere,
+                center,
+                planetCollider,
+                planetComp,
+                ocean,
+                groundMask,
+                16,
+                heightAboveSurface,
+                fallbackShellRadius,
+                spawnDryClearance);
+
+            Vector3 up = (candidate - center).normalized;
+            if (up.sqrMagnitude < 1e-8f)
+                continue;
+
+            float surfaceRadial = Vector3.Distance(candidate - up * heightAboveSurface, center);
+            if (waterLine > 1e-3f && surfaceRadial < waterLine)
+                continue;
+
+            if (!foundDry)
+            {
+                foundDry = true;
+                bestDry = candidate;
+            }
+
+            // Prefer hills when asked; otherwise take the first dry land.
+            if (!onlyOnElevatedTerrain || baseRadius < 1e-3f || surfaceRadial >= baseRadius)
+            {
+                spawnPos = candidate;
+                spawnRot = Quaternion.FromToRotation(Vector3.up, up);
+                return true;
+            }
+        }
+
+        if (!foundDry)
+            return false;
+
+        Vector3 dryUp = (bestDry - center).normalized;
+        if (dryUp.sqrMagnitude < 1e-8f)
+            dryUp = Vector3.up;
+        spawnPos = bestDry;
+        spawnRot = Quaternion.FromToRotation(Vector3.up, dryUp);
+        return true;
+    }
+
+    static float ResolveWaterLine(Planet planetComp, PlanetOceanLayer ocean, float dryClearance)
+    {
+        float clearance = Mathf.Max(0f, dryClearance);
+        if (ocean != null)
+            return ocean.ResolveOceanRadiusWorld() + clearance;
+        if (planetComp != null)
+            return planetComp.GetBaseRadiusWorld() + clearance;
+        return 0f;
+    }
+
+    void ApplyPose(Vector3 spawnPos, Quaternion spawnRot)
+    {
+        if (_rb == null)
+            _rb = GetComponent<Rigidbody>();
+        if (_rb != null)
+        {
+            _rb.linearVelocity = Vector3.zero;
+            _rb.angularVelocity = Vector3.zero;
+            _rb.position = spawnPos;
+            _rb.rotation = spawnRot;
+        }
         transform.position = spawnPos;
         transform.rotation = spawnRot;
     }

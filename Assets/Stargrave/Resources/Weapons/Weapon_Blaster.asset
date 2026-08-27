@@ -1,0 +1,36 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 33b6613516d14ba7ac1dc3f2abe4a2ae, type: 3}
+  m_Name: Weapon_Blaster
+  m_EditorClassIdentifier: Assembly-CSharp::WeaponDef
+  id: blaster
+  displayName: Blaster
+  heldVisualPrefab: {fileID: 931075093420240438, guid: 49840c33354172b44a894dc086e15a36, type: 3}
+  worldPickupPrefab: {fileID: 6280434963043433766, guid: 23c135a243e718d40a81b9a60cee9ee6, type: 3}
+  projectileColor: {r: 0.35, g: 0.95, b: 1, a: 1}
+  heldLocalEulerDegrees: {x: -90, y: 180, z: 90}
+  heldWorldLength: 0.42
+  fireCooldown: 0.28
+  reloadDuration: 1.4
+  shotsPerMagazine: 8
+  damagePerShot: 1
+  pelletCount: 1
+  spreadDegrees: 0.6
+  burstCount: 1
+  burstShotInterval: 0.06
+  damageFalloffStart: 20
+  damageFalloffEnd: 55
+  damageFalloffMinMultiplier: 0.45
+  lootClipsMin: 3
+  lootClipsMax: 6
+  lootAmmo: 28
+  dropWeight: 1.1

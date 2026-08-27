@@ -1,4 +1,5 @@
 using System.Collections;
+using System.Collections.Generic;
 using UnityEngine;
 using UnityEngine.Audio;
 
@@ -13,6 +14,9 @@ public class ZombieAI : MonoBehaviour
     const string RuntimeHitboxRootName = "RuntimeHitboxes";
 
     public static event System.Action ZombieKilled;
+
+    const int MaxActiveCorpses = 14;
+    static readonly List<ZombieAI> s_Corpses = new List<ZombieAI>(16);
 
     public static int LivingCount { get; private set; }
     public static int DiagnosticsFullAiActiveThisFrame => s_FullAiSlotsUsed;
@@ -49,7 +53,7 @@ public class ZombieAI : MonoBehaviour
     [Min(1f)] public float farDecisionDistance = 80f;
     [Range(1f, 6f)] public float farDecisionPeriodMultiplier = 2f;
     [Min(1f)] public float fullAiNearDistance = 35f;
-    [Min(1)] public int maxFullAiEnemiesNearPlayer = 120;
+    [Min(1)] public int maxFullAiEnemiesNearPlayer = 22;
     [Range(0f, 1f)] public float cheapIdleSpeedMultiplier = 0.45f;
     [Range(1f, 8f)] public float cheapDecisionPeriodMultiplier = 3f;
     [Tooltip("Only play walk/idle skins within this distance of the player (saves CPU). 0 = always when visible.")]
@@ -75,6 +79,9 @@ public class ZombieAI : MonoBehaviour
     [Tooltip("When shot/damaged, chase the player from ANY distance for this long (refreshed while engaged " +
              "within the detection radius). 0 = no forced aggro on damage.")]
     [Min(0f)] public float provokedAggroDuration = 30f;
+
+    [Header("Weapon loot")]
+    [Range(0f, 1f)] public float weaponDropChance = 0.2f;
 
     [Header("Health & combat")]
     [Tooltip("Fixed max health (used if min/max equal).")]
@@ -163,9 +170,15 @@ public class ZombieAI : MonoBehaviour
         _livingCounted = true;
     }
 
+    void OnDisable()
+    {
+        ReleaseLivingSlot();
+    }
+
     void OnDestroy()
     {
         ReleaseLivingSlot();
+        s_Corpses.Remove(this);
     }
 
     void ReleaseLivingSlot()
@@ -174,6 +187,50 @@ public class ZombieAI : MonoBehaviour
             return;
         LivingCount = Mathf.Max(0, LivingCount - 1);
         _livingCounted = false;
+    }
+
+    public void ResetForHordeReuse()
+    {
+        StopAllCoroutines();
+        s_Corpses.Remove(this);
+        _dead = false;
+        isAttacking = false;
+        _provoked = false;
+        _cachedShouldAttack = false;
+        _cachedChasing = false;
+        if (maxShotsToKill >= minShotsToKill && minShotsToKill > 0)
+            currentHealth = Random.Range(minShotsToKill, maxShotsToKill + 1);
+        else
+            currentHealth = Mathf.Max(1, maxHealth);
+
+        if (rb != null)
+        {
+            rb.isKinematic = false;
+            rb.detectCollisions = true;
+            rb.linearVelocity = Vector3.zero;
+            rb.angularVelocity = Vector3.zero;
+        }
+
+        var cols = GetComponentsInChildren<Collider>(true);
+        for (int i = 0; i < cols.Length; i++)
+        {
+            if (cols[i] != null)
+                cols[i].enabled = true;
+        }
+
+        if (animator != null)
+        {
+            animator.enabled = true;
+            animator.speed = 1f;
+        }
+        if (_culler != null)
+            _culler.enabled = true;
+        if (_locoPlay != null)
+            _locoPlay.enabled = true;
+        if (_procWalk != null)
+            _procWalk.enabled = true;
+        if (_voice != null)
+            _voice.enabled = true;
     }
 
     void Start()
@@ -190,6 +247,7 @@ public class ZombieAI : MonoBehaviour
         _dead = false;
         player = RuntimeSceneRefs.GetPlayerTransform();
         ResolvePlanet(force: true);
+        PerformancePresetBootstrap.ApplyZombiePreset(this);
 
         int period = Mathf.Max(1, surfaceStickRaycastPeriod);
         _surfaceStickPhase = Random.Range(0, period);
@@ -367,7 +425,7 @@ public class ZombieAI : MonoBehaviour
                 continue;
             var mats = r.materials;
             for (int i = 0; i < mats.Length; i++)
-                ModelMatteLighting.MakeMatte(mats[i]);
+                ModelMatteLighting.MakeMatte(mats[i], ambientFill: ModelMatteLighting.CharacterAmbientFill);
             r.materials = mats;
         }
     }
@@ -593,11 +651,46 @@ public class ZombieAI : MonoBehaviour
             TransientFxPool.Play(deathVfxPrefab, transform.position, Quaternion.identity, 2f);
 
         ZombieKilled?.Invoke();
+        if (ZombieHordeSim.HasInstance)
+            ZombieHordeSim.Instance.NotifyBodyDied(this);
         var spawner = ZombieSpawner.Instance;
         if (spawner != null && spawner.isActiveAndEnabled)
             spawner.OnZombieKilled(this); // schedules respawn; corpse despawns itself after fall+sink
 
+        TryDropWeaponLoot();
+        if (_culler != null)
+            _culler.enabled = false;
+        RegisterCorpse();
         StartCoroutine(CoDeathFallAndSink());
+    }
+
+    void RegisterCorpse()
+    {
+        s_Corpses.Add(this);
+        while (s_Corpses.Count > MaxActiveCorpses)
+        {
+            ZombieAI oldest = s_Corpses[0];
+            s_Corpses.RemoveAt(0);
+            if (oldest != null && oldest != this)
+            {
+                if (ZombieHordeSim.HasInstance && ZombieHordeSim.Instance.TryRecycleBody(oldest))
+                    continue;
+                Destroy(oldest.gameObject);
+            }
+        }
+    }
+
+    void TryDropWeaponLoot()
+    {
+        if (weaponDropChance <= 0f || Random.value > weaponDropChance)
+            return;
+
+        WeaponDef def = WeaponCatalog.RollLootDrop();
+        if (def == null)
+            return;
+
+        Vector3 pos = transform.position + transform.up * 0.35f;
+        WeaponPickup.Spawn(def, def.RollLootAmmo(), pos);
     }
 
     void PrepareCorpsePhysics()
@@ -827,45 +920,77 @@ public class ZombieAI : MonoBehaviour
         if (!TryGetTerrainContact(transform.position, radialUp, out _, out Vector3 surfaceUp))
             surfaceUp = radialUp;
 
-        TryPlayDeathAnimation();
+        bool playedDeathAnim = TryPlayDeathAnimation();
+        Quaternion fallenRot = transform.rotation;
 
-        Quaternion startRot = transform.rotation;
-        Vector3 startPos = transform.position;
-        bool fallForward = Random.value < 0.5f;
-        Quaternion fallenRot = ComputeSurfaceFlatFallenRotation(surfaceUp, transform.forward, fallForward);
-
-        float fallDur = Mathf.Max(0.15f, proceduralFallSeconds);
-        float t = 0f;
-        while (t < fallDur)
+        if (playedDeathAnim)
         {
-            t += Time.deltaTime;
-            float u = Mathf.SmoothStep(0f, 1f, Mathf.Clamp01(t / fallDur));
-            transform.SetPositionAndRotation(startPos, Quaternion.Slerp(startRot, fallenRot, u));
-            yield return null;
+            // Farmer/Humanoid Death lays the mesh down — skip procedural tip-over.
+            float hold = Mathf.Max(0.2f, deathFallHoldSeconds);
+            if (animator != null)
+            {
+                animator.Update(0f);
+                var info = animator.GetCurrentAnimatorStateInfo(0);
+                if (info.length > 0.15f)
+                    hold = Mathf.Max(hold, info.length);
+            }
+            float waited = 0f;
+            while (waited < hold)
+            {
+                waited += Time.deltaTime;
+                if (animator != null)
+                    animator.Update(Time.deltaTime);
+                yield return null;
+            }
+            FreezeFallenPose();
+            fallenRot = transform.rotation;
+        }
+        else
+        {
+            Quaternion startRot = transform.rotation;
+            Vector3 startPos = transform.position;
+            bool fallForward = Random.value < 0.5f;
+            fallenRot = ComputeSurfaceFlatFallenRotation(surfaceUp, transform.forward, fallForward);
+
+            float fallDur = Mathf.Max(0.15f, proceduralFallSeconds);
+            float tFall = 0f;
+            while (tFall < fallDur)
+            {
+                tFall += Time.deltaTime;
+                float u = Mathf.SmoothStep(0f, 1f, Mathf.Clamp01(tFall / fallDur));
+                transform.SetPositionAndRotation(startPos, Quaternion.Slerp(startRot, fallenRot, u));
+                yield return null;
+            }
+
+            transform.SetPositionAndRotation(startPos, fallenRot);
+            FreezeFallenPose();
+
+            radialUp = ResolveGravityUp();
+            if (!TryGetTerrainContact(transform.position, radialUp, out _, out surfaceUp))
+                surfaceUp = radialUp;
+
+            Vector3 headHint = Vector3.ProjectOnPlane(transform.up, surfaceUp);
+            if (headHint.sqrMagnitude < 1e-6f)
+                headHint = transform.forward;
+            fallenRot = ComputeSurfaceFlatFallenRotation(surfaceUp, headHint, fallForward);
+            transform.rotation = fallenRot;
+            if (animator != null)
+                animator.Update(0f);
         }
 
-        transform.SetPositionAndRotation(startPos, fallenRot);
-        FreezeFallenPose();
-
-        // Re-sample terrain normal at the corpse, re-flatten to that slope, then seat on the mesh.
-        radialUp = ResolveGravityUp();
-        if (!TryGetTerrainContact(transform.position, radialUp, out _, out surfaceUp))
-            surfaceUp = radialUp;
-
-        Vector3 headHint = Vector3.ProjectOnPlane(transform.up, surfaceUp);
-        if (headHint.sqrMagnitude < 1e-6f)
-            headHint = transform.forward;
-        fallenRot = ComputeSurfaceFlatFallenRotation(surfaceUp, headHint, fallForward);
-        transform.rotation = fallenRot;
-        if (animator != null)
-            animator.Update(0f);
         SeatFallenCorpseOnSurface(surfaceUp);
         SeatFallenCorpseOnSurface(surfaceUp);
+
+        if (ZombieHordeSim.HasInstance && ZombieHordeSim.Instance.Owns(this))
+        {
+            ZombieHordeSim.Instance.TryRecycleBody(this);
+            yield break;
+        }
 
         Vector3 sinkStart = transform.position;
         Vector3 sinkEnd = sinkStart - surfaceUp * Mathf.Max(0.25f, deathSinkDistance);
         float sinkDur = Mathf.Max(32f, deathSinkSeconds);
-        t = 0f;
+        float t = 0f;
         while (t < sinkDur)
         {
             t += Time.deltaTime;
@@ -876,7 +1001,6 @@ public class ZombieAI : MonoBehaviour
 
         Destroy(gameObject);
     }
-
     /// <summary>
     /// Hold the current skinned pose without disabling the Animator (disable can snap back to bind pose).
     /// </summary>
@@ -890,7 +1014,7 @@ public class ZombieAI : MonoBehaviour
         // Sample whatever frame we're on, then freeze so limbs stay as they were when they hit the ground.
         animator.speed = 0f;
         animator.Update(0f);
-        animator.cullingMode = AnimatorCullingMode.AlwaysAnimate;
+        animator.cullingMode = AnimatorCullingMode.CullCompletely;
     }
 
     void FixedUpdate()

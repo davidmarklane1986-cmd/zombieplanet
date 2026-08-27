@@ -79,6 +79,19 @@ MonoBehaviour:
   tintByKind: 0
   pickupClip: {fileID: 0}
   pickupVolume: 0.85
+  sizeMultiplier: 2
+  enableGlow: 1
+  glowSize: 1.9
+  glowIntensity: 1.1
+  glowPulseAmount: 0.3
+  glowPulseSpeed: 2.6
+  glowColorOverride: {r: 0, g: 0, b: 0, a: 0}
+  enableGlowLight: 1
+  glowLightIntensity: 2.2
+  glowLightRangeMultiplier: 3.5
+  collectDuration: 0.35
+  collectSpinSpeed: 720
+  collectTargetHeight: 1
 --- !u!1 &2004583055661005929
 GameObject:
   m_ObjectHideFlags: 0

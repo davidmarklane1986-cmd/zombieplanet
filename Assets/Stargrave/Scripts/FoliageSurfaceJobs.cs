@@ -58,6 +58,15 @@ public struct FoliageCandidate
     public float elevNorm;  // normalized elevation 0..1 (matches Planet.GetNormalizedElevationAtPosition)
 }
 
+/// <summary>Blittable building-pad sample for Burst elevation (mirrors <see cref="BuildingPadSample"/>).</summary>
+public struct BuildingPadBurstData
+{
+    public float3 axis;
+    public float rPad;
+    public float cosInner;
+    public float cosOuter;
+}
+
 /// <summary>
 /// Burst-compatible port of the planet's noise->elevation->normal math. All functions are static and
 /// operate purely on blittable inputs (NativeArrays + scalars), so they are safe to call from a job.
@@ -245,8 +254,8 @@ public static class FoliageNoise
         return layer.filterType == 1 ? EvalRidgid(layer, point, perm) : EvalSimple(layer, point, perm);
     }
 
-    /// <summary>ShapeGenerator.CalculateUnscaledElevation — local (unscaled) surface radius for a unit dir.</summary>
-    public static float CalcUnscaledElevation(float3 dir, in NativeArray<NoiseLayerData> layers,
+    /// <summary>ShapeGenerator.CalculateNaturalUnscaledElevation — noise-only local radius.</summary>
+    public static float CalcNaturalUnscaledElevation(float3 dir, in NativeArray<NoiseLayerData> layers,
         in NativeArray<int> perm, float planetRadius)
     {
         int len = layers.Length;
@@ -270,9 +279,75 @@ public static class FoliageNoise
         return planetRadius * (1f + elevation);
     }
 
+    /// <summary>Hybrid pad deform matching <see cref="PlanetBuildingPads.Apply"/> (cos-cone, no acos).</summary>
+    public static float ApplyBuildingPads(float3 dir, float naturalRadius, in NativeArray<BuildingPadBurstData> pads)
+    {
+        if (!pads.IsCreated || pads.Length == 0)
+            return naturalRadius;
+
+        float lenSq = math.lengthsq(dir);
+        if (lenSq > 1e-12f)
+            dir = dir * math.rsqrt(lenSq);
+        else
+            dir = new float3(0f, 1f, 0f);
+
+        float bestW = 0f;
+        float bestR = naturalRadius;
+        for (int i = 0; i < pads.Length; i++)
+        {
+            BuildingPadBurstData p = pads[i];
+            float d = math.dot(dir, p.axis);
+            if (d < p.cosOuter)
+                continue;
+
+            float wOuter = d >= p.cosInner ? 1f : SmoothStep(p.cosOuter, p.cosInner, d);
+            if (wOuter <= bestW)
+                continue;
+
+            float wFlat = d >= 0.999999f ? 1f : SmoothStep(p.cosInner, 1f, d);
+            float rPlane = p.rPad / math.max(d, 0.02f);
+            float target = math.lerp(p.rPad, rPlane, wFlat);
+            float deformed = math.lerp(naturalRadius, target, wOuter);
+            bestW = wOuter;
+            bestR = deformed;
+        }
+        return bestR;
+    }
+
+    static float SmoothStep(float edge0, float edge1, float x)
+    {
+        if (edge1 <= edge0)
+            return x >= edge1 ? 1f : 0f;
+        float t = math.saturate((x - edge0) / (edge1 - edge0));
+        return t * t * (3f - 2f * t);
+    }
+
+    /// <summary>ShapeGenerator.CalculateUnscaledElevation — local (unscaled) surface radius for a unit dir.</summary>
+    public static float CalcUnscaledElevation(float3 dir, in NativeArray<NoiseLayerData> layers,
+        in NativeArray<int> perm, float planetRadius)
+    {
+        return CalcUnscaledElevation(dir, layers, perm, planetRadius, default);
+    }
+
+    /// <summary>ShapeGenerator.CalculateUnscaledElevation with building pads.</summary>
+    public static float CalcUnscaledElevation(float3 dir, in NativeArray<NoiseLayerData> layers,
+        in NativeArray<int> perm, float planetRadius, in NativeArray<BuildingPadBurstData> pads)
+    {
+        float natural = CalcNaturalUnscaledElevation(dir, layers, perm, planetRadius);
+        return ApplyBuildingPads(dir, natural, pads);
+    }
+
     /// <summary>Planet.GetSurfaceNormalWorld — analytic outward normal from two tangential finite differences.</summary>
     public static float3 SurfaceNormal(float3 dir, in NativeArray<NoiseLayerData> layers, in NativeArray<int> perm,
         float planetRadius, float scaleFactor, float3 center, float worldRadiusAtDir)
+    {
+        return SurfaceNormal(dir, layers, perm, planetRadius, scaleFactor, center, worldRadiusAtDir, default);
+    }
+
+    /// <summary>Planet.GetSurfaceNormalWorld with building pads.</summary>
+    public static float3 SurfaceNormal(float3 dir, in NativeArray<NoiseLayerData> layers, in NativeArray<int> perm,
+        float planetRadius, float scaleFactor, float3 center, float worldRadiusAtDir,
+        in NativeArray<BuildingPadBurstData> pads)
     {
         float3 up = new float3(0f, 1f, 0f);
         float3 t1 = math.cross(dir, up);
@@ -285,8 +360,8 @@ public static class FoliageNoise
         float3 p0 = center + dir * worldRadiusAtDir;
         float3 da = math.normalize(dir + t1 * eps);
         float3 db = math.normalize(dir + t2 * eps);
-        float3 pa = center + da * (CalcUnscaledElevation(da, layers, perm, planetRadius) * scaleFactor);
-        float3 pb = center + db * (CalcUnscaledElevation(db, layers, perm, planetRadius) * scaleFactor);
+        float3 pa = center + da * (CalcUnscaledElevation(da, layers, perm, planetRadius, pads) * scaleFactor);
+        float3 pb = center + db * (CalcUnscaledElevation(db, layers, perm, planetRadius, pads) * scaleFactor);
 
         float3 n = math.cross(pa - p0, pb - p0);
         if (math.lengthsq(n) < 1e-12f)
@@ -312,6 +387,7 @@ public struct FoliageScatterJob : IJobParallelFor
     [ReadOnly] public NativeArray<float3> directions;
     [ReadOnly] public NativeArray<NoiseLayerData> layers;
     [ReadOnly] public NativeArray<int> perm;
+    [ReadOnly] public NativeArray<BuildingPadBurstData> pads;
 
     public float planetRadius;   // local (unscaled) planet radius
     public float scaleFactor;    // world scale (max lossy axis, guarded)
@@ -329,7 +405,7 @@ public struct FoliageScatterJob : IJobParallelFor
         float3 dir = directions[index];
         FoliageCandidate r = default; // accepted defaults to 0
 
-        float localR = FoliageNoise.CalcUnscaledElevation(dir, layers, perm, planetRadius);
+        float localR = FoliageNoise.CalcUnscaledElevation(dir, layers, perm, planetRadius, pads);
         float worldR = localR * scaleFactor; // == |pos - center|
         float3 pos = center + dir * worldR;
 
@@ -352,7 +428,7 @@ public struct FoliageScatterJob : IJobParallelFor
             return;
         }
 
-        float3 normal = FoliageNoise.SurfaceNormal(dir, layers, perm, planetRadius, scaleFactor, center, worldR);
+        float3 normal = FoliageNoise.SurfaceNormal(dir, layers, perm, planetRadius, scaleFactor, center, worldR, pads);
         float d = math.clamp(math.dot(normal, dir), -1f, 1f); // radial == dir (pos-center normalized)
         float slope = math.degrees(math.acos(d));
         float elevNorm = elevMax > elevMin ? math.saturate((localR - elevMin) / (elevMax - elevMin)) : 0f;

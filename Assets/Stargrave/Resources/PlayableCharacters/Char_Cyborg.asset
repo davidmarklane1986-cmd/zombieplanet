@@ -1,0 +1,29 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 2ecfbaf62f5d30a448607b9546e363f2, type: 3}
+  m_Name: Char_Cyborg
+  m_EditorClassIdentifier: Assembly-CSharp::PlayableCharacterDef
+  id: cyborg
+  displayName: Cyborg
+  blurb: Heavy hitter. Slower trigger finger.
+  moveSpeed: 7.2
+  sprintMultiplier: 1.35
+  assignedWeapon: {fileID: 11400000, guid: f52e921ad61f4453b12865cde1fe6016, type: 2}
+  maxHealth: 110
+  characterPrefab: {fileID: 8918531376372507842, guid: b6ee507dac55a254ea09c3567891e3ad, type: 3}
+  modelYawOffsetDegrees: 0
+  hipsYawOffsetDegrees: 0
+  accentColor: {r: 0.55, g: 0.9, b: 0.55, a: 1}
+  idleStateName: root|Idle_Menu
+  runStateName: root|Run_Front
+  runBackStateName: root|Run_Back
+  deathStateName: root|Death

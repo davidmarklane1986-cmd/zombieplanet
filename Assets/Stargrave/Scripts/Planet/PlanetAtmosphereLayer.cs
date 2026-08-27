@@ -9,6 +9,7 @@ using UnityEditor;
 /// </summary>
 [ExecuteAlways]
 [DisallowMultipleComponent]
+[DefaultExecutionOrder(50)]
 public class PlanetAtmosphereLayer : MonoBehaviour
 {
     public enum AtmosphereMode
@@ -32,6 +33,8 @@ public class PlanetAtmosphereLayer : MonoBehaviour
     static readonly int NightSkyVisibilityId = Shader.PropertyToID("_NightSkyVisibility");
     static readonly int SunsetColorId = Shader.PropertyToID("_SunsetColor");
     static readonly int SunsetStrengthId = Shader.PropertyToID("_SunsetStrength");
+    static readonly int PlayerSunAmountId = Shader.PropertyToID("_PlayerSunAmount");
+    static readonly int PlayerTwilightId = Shader.PropertyToID("_PlayerTwilight");
 
     [Header("Mode")]
     public AtmosphereMode atmosphereMode = AtmosphereMode.Scattering;
@@ -63,35 +66,42 @@ public class PlanetAtmosphereLayer : MonoBehaviour
     [Range(0f, 12f)] public float sunIntensity = 2.0f;
     [Range(0f, 2f)] public float mieStrength = 0.25f;
     [Range(1f, 32f)] public float miePower = 8f;
-    [Range(0f, 0.6f)] public float nightEmission = 0.05f;
-    [Range(0f, 1f)] public float nightSkyVisibility = 0.75f;
-    public Color sunsetColor = new Color(1f, 0.52f, 0.2f, 1f);
-    [Range(0f, 2f)] public float sunsetStrength = 0.9f;
+    [Range(0f, 0.6f)] public float nightEmission = 0.03f;
+    [Range(0f, 1f)] public float nightSkyVisibility = 0.65f;
+    [Tooltip("Atmosphere flush at sunrise (rose / magenta).")]
+    public Color sunriseColor = new Color(1f, 0.48f, 0.62f, 1f);
+    [Tooltip("Atmosphere flush at sunset (amber / orange).")]
+    public Color sunsetColor = new Color(1f, 0.48f, 0.22f, 1f);
+    [Range(0f, 2f)] public float sunsetStrength = 0.7f;
 
     [Header("Distance / Atmospheric Fog")]
     [Tooltip("Blend fog settings based on day/night using the sun direction. Soft day haze + denser night fog.")]
     public bool controlFogWithDayNight = true;
-    // Start dusk fog while the sun is still a bit above the local horizon (reduces silver wash).
-    [Range(-1f, 1f)] public float nightStartsAtSunDot = 0.18f;
-    [Range(0f, 1f)] public float transitionWidth = 0.28f;
+    // Night fog begins after local sunset; most of the blend finishes deeper on the night side.
+    [Range(-1f, 1f)] public float nightStartsAtSunDot = -0.08f;
+    [Range(0.05f, 1f)] public float transitionWidth = 0.48f;
     [Tooltip("If enabled, daytime distance haze is forced off (not recommended — kills scale cue).")]
     public bool strictNoDayFog = false;
     [Tooltip("Use camera position relative to planet to evaluate local day/night (recommended for spherical worlds).")]
     public bool useCameraLocalDayNight = true;
-    [Min(0f)] public float fogBlendSpeed = 2f;
+    [Min(0f)] public float fogBlendSpeed = 0.55f;
     [Tooltip("Linear start/end gives a clear haze belt for scale. Exp/Exp2 also supported via density.")]
     public FogMode fogMode = FogMode.Linear;
     // Day haze should read as soft sky blue (scale cue); night stays dark.
     [ColorUsage(false, true)] public Color dayFogColor = new Color(0.55f, 0.68f, 0.86f, 1f);
-    [ColorUsage(false, true)] public Color nightFogColor = new Color(0.02f, 0.03f, 0.06f, 1f);
+    [ColorUsage(false, true)] public Color nightFogColor = new Color(0.025f, 0.035f, 0.06f, 1f);
+    [Tooltip("Distance haze tint at sunrise.")]
+    [ColorUsage(false, true)] public Color dawnFogColor = new Color(0.82f, 0.5f, 0.58f, 1f);
+    [Tooltip("Distance haze tint at sunset.")]
+    [ColorUsage(false, true)] public Color twilightFogColor = new Color(0.82f, 0.48f, 0.28f, 1f);
     [Tooltip("For testing: force full night fog regardless of sun angle.")]
     public bool forceNightFogDebug = false;
     [Min(0f)] public float dayFogDensity = 0.0025f;
-    [Min(0f)] public float nightFogDensity = 0.012f;
+    [Min(0f)] public float nightFogDensity = 0.01f;
     [Min(0f)] public float dayFogStartDistance = 140f;
-    [Min(0f)] public float nightFogStartDistance = 50f;
+    [Min(0f)] public float nightFogStartDistance = 35f;
     [Min(0f)] public float dayFogEndDistance = 1200f;
-    [Min(0f)] public float nightFogEndDistance = 420f;
+    [Min(0f)] public float nightFogEndDistance = 280f;
 
     private GameObject atmosphereObj;
     private Material _runtimeMaterial;
@@ -132,21 +142,29 @@ public class PlanetAtmosphereLayer : MonoBehaviour
         sunIntensity = 4.8f;
         mieStrength = 0.62f;
         miePower = 6.5f;
-        nightEmission = 0.09f;
-        nightSkyVisibility = 0.82f;
-        sunsetColor = new Color(1f, 0.5f, 0.18f, 1f);
-        sunsetStrength = 1.1f;
+        nightEmission = 0.03f;
+        nightSkyVisibility = 0.65f;
+        sunriseColor = new Color(1f, 0.48f, 0.62f, 1f);
+        sunsetColor = new Color(1f, 0.48f, 0.22f, 1f);
+        sunsetStrength = 0.7f;
+        dawnFogColor = new Color(0.82f, 0.5f, 0.58f, 1f);
+        twilightFogColor = new Color(0.82f, 0.48f, 0.28f, 1f);
         flipDayNightHemisphere = true;
         controlFogWithDayNight = true;
+        nightStartsAtSunDot = -0.08f;
+        transitionWidth = 0.48f;
+        fogBlendSpeed = 0.55f;
     }
 
     static void EnsureRenderSettingsSun()
     {
-        if (RenderSettings.sun != null)
+        if (RenderSettings.sun != null && RenderSettings.sun.type == LightType.Directional)
+            return;
+        if (PlanetDayNightCycle.IsEligibleSunLight(RenderSettings.sun))
             return;
         foreach (Light L in FindObjectsByType<Light>(FindObjectsInactive.Exclude))
         {
-            if (L.type != LightType.Directional || !L.isActiveAndEnabled)
+            if (!PlanetDayNightCycle.IsEligibleSunLight(L))
                 continue;
             RenderSettings.sun = L;
             return;
@@ -344,10 +362,24 @@ public class PlanetAtmosphereLayer : MonoBehaviour
 
         m.SetVector(PlanetCenterId, transform.position);
 
-        // Hemisphere for atmosphere uses "from planet center toward sun". Unity's directional forward is light-travel axis, so flip if needed.
-        Vector3 sunDir = ResolveDirectionalLightDir(out hasActiveDirectional);
+        // Atmosphere / fog want direction TOWARD the sun (matches skybox _SunDirection and URP N·L).
+        // Prefer the live value from PlanetDayNightCycle so we never lag a different light.
+        Vector3 towardSun;
+        if (PlanetDayNightCycle.ActiveSunLight != null &&
+            PlanetDayNightCycle.ActiveSunLight.isActiveAndEnabled &&
+            PlanetDayNightCycle.TowardSunWS.sqrMagnitude > 1e-8f)
+        {
+            hasActiveDirectional = true;
+            towardSun = PlanetDayNightCycle.TowardSunWS.normalized;
+        }
+        else
+        {
+            Vector3 lightForward = ResolveDirectionalLightDir(out hasActiveDirectional);
+            towardSun = -lightForward;
+        }
 
-        Vector3 materialSunDir = flipDayNightHemisphere ? -sunDir : sunDir;
+        // flipDayNightHemisphere historically meant "use -forward" (= toward sun). Keep that default true.
+        Vector3 materialSunDir = flipDayNightHemisphere ? towardSun : -towardSun;
         m.SetVector(SunDirId, new Vector4(materialSunDir.x, materialSunDir.y, materialSunDir.z, 0f));
 
         string shaderName = m.shader.name;
@@ -358,7 +390,9 @@ public class PlanetAtmosphereLayer : MonoBehaviour
             m.SetFloat("_Intensity", intensity);
             m.SetFloat(NightRimMulId, nightRimMultiplier);
             m.SetFloat(DayRimCurveId, dayRimCurve);
-            return sunDir;
+            if (Application.isPlaying)
+                m.SetFloat(PlayerSunAmountId, PlanetDayNightCycle.SkyDayAmount);
+            return towardSun;
         }
 
         if (shaderName == "Stargrave/Planet Atmosphere Scattering")
@@ -376,38 +410,45 @@ public class PlanetAtmosphereLayer : MonoBehaviour
             m.SetFloat(MiePowerId, miePower);
             m.SetFloat(NightEmissionId, nightEmission);
             m.SetFloat(NightSkyVisibilityId, nightSkyVisibility);
-            m.SetColor(SunsetColorId, sunsetColor);
+            Color horizonTint = Application.isPlaying && PlanetDayNightCycle.SunIsRising
+                ? sunriseColor
+                : sunsetColor;
+            m.SetColor(SunsetColorId, horizonTint);
             m.SetFloat(SunsetStrengthId, sunsetStrength);
+            // Sky daylight + golden hour (not player LoS shade).
+            if (Application.isPlaying)
+            {
+                m.SetFloat(PlayerSunAmountId, PlanetDayNightCycle.SkyDayAmount);
+                m.SetFloat(PlayerTwilightId, PlanetDayNightCycle.TwilightAmount);
+            }
+            Shader.SetGlobalFloat(PlayerTwilightId, PlanetDayNightCycle.TwilightAmount);
         }
 
-        return sunDir;
+        return towardSun;
     }
 
     static Vector3 ResolveDirectionalLightDir(out bool hasActiveDirectional)
     {
         hasActiveDirectional = false;
-        if (RenderSettings.sun != null)
+        if (PlanetDayNightCycle.IsEligibleSunLight(PlanetDayNightCycle.ActiveSunLight))
         {
-            hasActiveDirectional = RenderSettings.sun.isActiveAndEnabled;
+            hasActiveDirectional = true;
+            return PlanetDayNightCycle.ActiveSunLight.transform.forward.normalized;
+        }
+        if (PlanetDayNightCycle.IsEligibleSunLight(RenderSettings.sun))
+        {
+            hasActiveDirectional = true;
             return RenderSettings.sun.transform.forward.normalized;
         }
 
-        Light fallbackAny = null;
-        foreach (Light l in FindObjectsByType<Light>(FindObjectsInactive.Include))
+        foreach (Light l in FindObjectsByType<Light>(FindObjectsInactive.Exclude))
         {
-            if (l == null || l.type != LightType.Directional)
+            if (!PlanetDayNightCycle.IsEligibleSunLight(l))
                 continue;
-            if (l.isActiveAndEnabled)
-            {
-                hasActiveDirectional = true;
-                return l.transform.forward.normalized;
-            }
-            if (fallbackAny == null)
-                fallbackAny = l;
+            hasActiveDirectional = true;
+            return l.transform.forward.normalized;
         }
 
-        if (fallbackAny != null)
-            return fallbackAny.transform.forward.normalized;
         return Vector3.up;
     }
 
@@ -439,8 +480,8 @@ public class PlanetAtmosphereLayer : MonoBehaviour
         if (!controlFogWithDayNight)
             return;
 
-        // Direction from world point toward sun.
-        Vector3 worldToSun = -sunDir;
+        // sunDir from PushSunAndPlanetToMaterial is already toward-the-sun.
+        Vector3 worldToSun = sunDir.sqrMagnitude > 1e-8f ? sunDir.normalized : Vector3.up;
         float globalSunDotUp = Vector3.Dot(Vector3.up, worldToSun);
         float sunDotUp = globalSunDotUp;
         Camera mainCam = useCameraLocalDayNight ? RuntimeSceneRefs.GetMainCamera() : null;
@@ -456,23 +497,32 @@ public class PlanetAtmosphereLayer : MonoBehaviour
         {
             targetNightBlend = 1f;
         }
-        else
+        else if (Application.isPlaying)
         {
-            // Day stays at 0 until sunDot <= threshold, then ramps to 1 over transitionWidth.
-            // Use both local and global checks and keep the stronger night signal to avoid "stuck day" edge cases.
-            float nightTLocal = Mathf.InverseLerp(nightStartsAtSunDot, nightStartsAtSunDot - width, sunDotUp);
-            float nightTGlobal = Mathf.InverseLerp(nightStartsAtSunDot, nightStartsAtSunDot - width, globalSunDotUp);
-            float nightT = Mathf.Max(nightTLocal, nightTGlobal);
-            targetNightBlend = Mathf.SmoothStep(0f, 1f, nightT);
+            // Same clock as sky daylight / atmosphere (elevation-based night).
+            targetNightBlend = Mathf.Clamp01(PlanetDayNightCycle.NightAmount);
             if (!hasActiveDirectional)
                 targetNightBlend = 1f;
-            if (strictNoDayFog && hasActiveDirectional && sunDotUp > nightStartsAtSunDot && globalSunDotUp > nightStartsAtSunDot)
+        }
+        else
+        {
+            // Day/night for fog: prefer camera-local elevation on spherical worlds.
+            float nightTLocal = Mathf.InverseLerp(nightStartsAtSunDot, nightStartsAtSunDot - width, sunDotUp);
+            float nightTGlobal = Mathf.InverseLerp(nightStartsAtSunDot, nightStartsAtSunDot - width, globalSunDotUp);
+            float nightT = (useCameraLocalDayNight && mainCam != null) ? nightTLocal : nightTGlobal;
+            nightT = Mathf.SmoothStep(0f, 1f, nightT);
+            targetNightBlend = nightT * nightT;
+            if (!hasActiveDirectional)
+                targetNightBlend = 1f;
+            if (strictNoDayFog && hasActiveDirectional && sunDotUp > nightStartsAtSunDot)
                 targetNightBlend = 0f;
         }
         float dt = Application.isPlaying ? Time.deltaTime : 0.016f;
-        if (strictNoDayFog && hasActiveDirectional && sunDotUp > nightStartsAtSunDot && globalSunDotUp > nightStartsAtSunDot)
+        if (strictNoDayFog && hasActiveDirectional && sunDotUp > nightStartsAtSunDot && !Application.isPlaying)
             _nightFogBlend = 0f;
-        _nightFogBlend = Mathf.MoveTowards(_nightFogBlend, targetNightBlend, fogBlendSpeed * dt);
+        // Follow player sun amount quickly so fog doesn't lag atmosphere/lights.
+        float fogFollow = Application.isPlaying ? Mathf.Max(fogBlendSpeed, 1.25f) : fogBlendSpeed;
+        _nightFogBlend = Mathf.MoveTowards(_nightFogBlend, targetNightBlend, fogFollow * dt);
 
         float density = Mathf.Lerp(dayFogDensity, nightFogDensity, _nightFogBlend);
         float startDistance = Mathf.Lerp(dayFogStartDistance, nightFogStartDistance, _nightFogBlend);
@@ -482,11 +532,17 @@ public class PlanetAtmosphereLayer : MonoBehaviour
         bool hasLinearHaze = fogMode == FogMode.Linear && endDistance > startDistance + 1f;
         RenderSettings.fog = density > 0.00005f || hasLinearHaze || _nightFogBlend > 0.001f;
         RenderSettings.fogMode = fogMode;
-        // Pull fog colour toward night faster than density so dusk isn't silver-grey.
-        float fogColorNight = 1f - (1f - _nightFogBlend) * (1f - _nightFogBlend);
+        // Match night-side bias: fog colour stays day-like longer, then softens into night.
+        float fogColorNight = _nightFogBlend * _nightFogBlend * _nightFogBlend;
         Color fogCol = Color.Lerp(dayFogColor, nightFogColor, fogColorNight);
-        // Day haze may be sky-bright for scale; night stays dark (no silver wash).
+        float twilightFog = Application.isPlaying ? PlanetDayNightCycle.TwilightAmount : 0f;
+        Color fogTwilight = (Application.isPlaying && PlanetDayNightCycle.SunIsRising)
+            ? dawnFogColor
+            : twilightFogColor;
+        fogCol = Color.Lerp(fogCol, fogTwilight, twilightFog * 0.55f);
+        // Day haze may be sky-bright for scale; night stays dark. Milder twilight wash.
         float maxLum = Mathf.Lerp(0.55f, 0.06f, fogColorNight);
+        maxLum = Mathf.Lerp(maxLum, 0.5f, twilightFog);
         float lum = fogCol.r * 0.2126f + fogCol.g * 0.7152f + fogCol.b * 0.0722f;
         if (lum > maxLum && lum > 1e-4f)
             fogCol *= maxLum / lum;

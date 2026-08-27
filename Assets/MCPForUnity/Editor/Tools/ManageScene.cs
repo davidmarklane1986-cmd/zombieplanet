@@ -708,7 +708,7 @@ namespace MCPForUnity.Editor.Tools
                 {
                     if (int.TryParse(targetToken.ToString(), out int id))
                     {
-                        var obj = EditorUtility.InstanceIDToObject(id);
+                        var obj = UnityObjectIdCompat.InstanceIDToObjectCompat(id);
                         if (obj is GameObject go) return go;
                         if (obj is Component c) return c.gameObject;
                     }
@@ -786,7 +786,7 @@ namespace MCPForUnity.Editor.Tools
             var d = new Dictionary<string, object>
             {
                 { "name", go.name },
-                { "instanceID", go.GetInstanceID() },
+                { "instanceID", go.GetInstanceIDCompat() },
                 { "activeSelf", go.activeSelf },
                 { "activeInHierarchy", go.activeInHierarchy },
                 { "tag", go.tag },

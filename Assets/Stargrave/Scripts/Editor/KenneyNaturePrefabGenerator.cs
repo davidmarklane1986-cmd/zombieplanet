@@ -161,7 +161,12 @@ public static class KenneyNaturePrefabGenerator
                     mat.SetTexture("_BaseMap", baseMap);
                 mat.SetColor("_BaseColor", baseColor);
                 // Keep upgraded foliage matte like the planet terrain (no specular/reflections).
-                ModelMatteLighting.MakeMatte(mat);
+                // Match terrain terminator so upright grass dims with the ground at dawn/dusk.
+                ModelMatteLighting.MakeMatte(
+                    mat,
+                    matchTerrainTerminator: true,
+                    ambientFill: ModelMatteLighting.FoliageAmbientFill,
+                    diffuseScale: ModelMatteLighting.FoliageDiffuseScale);
                 changed = true;
             }
 

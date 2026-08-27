@@ -1,8 +1,10 @@
 using System;
 using System.Linq;
 using MCPForUnity.Editor.Helpers;
+using MCPForUnity.Runtime.Helpers;
 using Newtonsoft.Json.Linq;
 using UnityEditor;
+using UnityEngine;
 
 namespace MCPForUnity.Editor.Resources.Editor
 {
@@ -21,21 +23,24 @@ namespace MCPForUnity.Editor.Resources.Editor
                     activeObject = UnityEditor.Selection.activeObject?.name,
                     activeGameObject = UnityEditor.Selection.activeGameObject?.name,
                     activeTransform = UnityEditor.Selection.activeTransform?.name,
-                    activeInstanceID = UnityEditor.Selection.activeInstanceID,
+                    activeInstanceID = GetActiveInstanceIDCompat(),
+#if UNITY_6000_5_OR_NEWER
+                    activeEntityID = EntityId.ToULong(UnityEditor.Selection.activeEntityId).ToString(),
+#endif
                     count = UnityEditor.Selection.count,
                     objects = UnityEditor.Selection.objects
                         .Select(obj => new
                         {
                             name = obj?.name,
                             type = obj?.GetType().FullName,
-                            instanceID = obj?.GetInstanceID()
+                            instanceID = obj?.GetInstanceIDCompat()
                         })
                         .ToList(),
                     gameObjects = UnityEditor.Selection.gameObjects
                         .Select(go => new
                         {
                             name = go?.name,
-                            instanceID = go?.GetInstanceID()
+                            instanceID = go?.GetInstanceIDCompat()
                         })
                         .ToList(),
                     assetGUIDs = UnityEditor.Selection.assetGUIDs
@@ -47,6 +52,15 @@ namespace MCPForUnity.Editor.Resources.Editor
             {
                 return new ErrorResponse($"Error getting selection: {e.Message}");
             }
+        }
+
+        static int GetActiveInstanceIDCompat()
+        {
+#if UNITY_6000_5_OR_NEWER
+            return (int)EntityId.ToULong(UnityEditor.Selection.activeEntityId);
+#else
+            return UnityEditor.Selection.activeInstanceID;
+#endif
         }
     }
 }

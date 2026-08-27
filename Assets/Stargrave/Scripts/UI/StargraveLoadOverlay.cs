@@ -204,6 +204,16 @@ public sealed class StargraveLoadOverlay : MonoBehaviour
         }
     }
 
+    public bool IsBusy => _busy;
+
+    /// <summary>Hide the DontDestroyOnLoad overlay when it is not actively loading a scene.</summary>
+    public void HideIfIdle()
+    {
+        if (_busy)
+            return;
+        HideImmediate();
+    }
+
     void HideImmediate()
     {
         if (_group != null)

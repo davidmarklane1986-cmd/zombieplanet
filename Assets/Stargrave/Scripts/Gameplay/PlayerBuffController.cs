@@ -29,6 +29,7 @@ public class PlayerBuffController : MonoBehaviour
         public float jumpMult;
         public float damageMult;
         public float fireRateMult;
+        public float reloadMult;
         public float endTime;
         public float remainingSeconds;
         public bool drainWhileUsed;
@@ -39,6 +40,9 @@ public class PlayerBuffController : MonoBehaviour
 
     /// <summary>Product of active timed buffs; 1 when none. Higher = faster shooting (cooldown divided by this).</summary>
     public float CombinedFireRateMultiplier { get; private set; } = 1f;
+
+    /// <summary>Product of active timed buffs; 1 when none. Higher = faster reload (reload duration divided by this).</summary>
+    public float CombinedReloadMultiplier { get; private set; } = 1f;
 
     void Awake()
     {
@@ -81,20 +85,56 @@ public class PlayerBuffController : MonoBehaviour
 
     public void ApplyTimedBuff(string buffId, float durationSeconds, float speedMultiplier, float jumpMultiplier,
         float damageMultiplier = 1f, float fireRateMultiplier = 1f, string displayName = null,
-        bool drainWhileUsed = false)
+        bool drainWhileUsed = false, float reloadMultiplier = 1f)
     {
         EnsureResolvedMotor();
         if (motor != null && (baseSpeed < 0f || baseJump < 0f))
             CacheBaseValues();
 
         float dur = Mathf.Max(0.01f, durationSeconds);
+        string name = string.IsNullOrWhiteSpace(displayName) ? buffId : displayName;
+
+        // Same buff stacks duration (2× Rapid Fire = 2× time). Multipliers refresh to the latest pickup.
+        if (active.TryGetValue(buffId, out ActiveBuff existing))
+        {
+            float remaining = existing.drainWhileUsed
+                ? Mathf.Max(0f, existing.remainingSeconds)
+                : Mathf.Max(0f, existing.endTime - Time.time);
+
+            existing.displayName = name;
+            existing.speedMult = Mathf.Max(0.01f, speedMultiplier);
+            existing.jumpMult = Mathf.Max(0.01f, jumpMultiplier);
+            existing.damageMult = Mathf.Max(0.01f, damageMultiplier);
+            existing.fireRateMult = Mathf.Max(0.01f, fireRateMultiplier);
+            existing.reloadMult = Mathf.Max(0.01f, reloadMultiplier);
+            existing.drainWhileUsed = drainWhileUsed;
+            if (drainWhileUsed)
+            {
+                existing.remainingSeconds = remaining + dur;
+                existing.endTime = float.PositiveInfinity;
+            }
+            else
+            {
+                existing.remainingSeconds = 0f;
+                existing.endTime = Time.time + remaining + dur;
+            }
+
+            active[buffId] = existing;
+            NotifyPowerUpsChanged();
+
+            if (logOnApply)
+                Debug.Log($"[Buff] {buffId} stacked +{dur:0.#}s → {remaining + dur:0.#}s total (spd x{existing.speedMult}, rof x{existing.fireRateMult}, rl x{existing.reloadMult})");
+            return;
+        }
+
         ActiveBuff b = new ActiveBuff
         {
-            displayName = string.IsNullOrWhiteSpace(displayName) ? buffId : displayName,
+            displayName = name,
             speedMult = Mathf.Max(0.01f, speedMultiplier),
             jumpMult = Mathf.Max(0.01f, jumpMultiplier),
             damageMult = Mathf.Max(0.01f, damageMultiplier),
             fireRateMult = Mathf.Max(0.01f, fireRateMultiplier),
+            reloadMult = Mathf.Max(0.01f, reloadMultiplier),
             drainWhileUsed = drainWhileUsed,
             remainingSeconds = drainWhileUsed ? dur : 0f,
             endTime = drainWhileUsed ? float.PositiveInfinity : Time.time + dur
@@ -104,7 +144,7 @@ public class PlayerBuffController : MonoBehaviour
         NotifyPowerUpsChanged();
 
         if (logOnApply)
-            Debug.Log($"[Buff] {buffId}: spd x{b.speedMult}, jmp x{b.jumpMult}, dmg x{b.damageMult}, rof x{b.fireRateMult} ({durationSeconds}s{(drainWhileUsed ? ", drain while used" : "")})");
+            Debug.Log($"[Buff] {buffId}: spd x{b.speedMult}, jmp x{b.jumpMult}, dmg x{b.damageMult}, rof x{b.fireRateMult}, rl x{b.reloadMult} ({durationSeconds}s{(drainWhileUsed ? ", drain while used" : "")})");
     }
 
     /// <summary>Drains remaining time on a drain-while-used buff (e.g. Rapid Fire while holding trigger).</summary>
@@ -144,22 +184,75 @@ public class PlayerBuffController : MonoBehaviour
         return Mathf.Max(0f, b.endTime - Time.time);
     }
 
-    public string[] GetActivePowerUpNames()
+    /// <summary>Speed multiplier from drain-while-used speed buffs (e.g. sprint-activated Speed Boost).</summary>
+    public float GetSprintActivatedSpeedMultiplier()
     {
-        var names = new List<string>();
+        float m = 1f;
         foreach (var kvp in active)
         {
-            string displayName = string.IsNullOrWhiteSpace(kvp.Value.displayName) ? kvp.Key : kvp.Value.displayName;
-            float remaining = kvp.Value.drainWhileUsed
-                ? kvp.Value.remainingSeconds
-                : (kvp.Value.endTime - Time.time);
-            int secs = Mathf.Max(0, Mathf.CeilToInt(remaining));
-            if (!string.IsNullOrWhiteSpace(displayName))
-                names.Add($"{displayName} {secs}s");
+            if (kvp.Value.drainWhileUsed && kvp.Value.speedMult > 1.001f)
+                m *= kvp.Value.speedMult;
+        }
+        return m;
+    }
+
+    public bool HasSprintActivatedSpeedBuff()
+    {
+        foreach (var kvp in active)
+        {
+            if (kvp.Value.drainWhileUsed && kvp.Value.speedMult > 1.001f)
+                return true;
+        }
+        return false;
+    }
+
+    public string[] GetActivePowerUpNames()
+    {
+        BuffStatus[] statuses = GetActiveBuffStatuses();
+        var names = new List<string>(statuses.Length);
+        for (int i = 0; i < statuses.Length; i++)
+        {
+            BuffStatus s = statuses[i];
+            int secs = Mathf.Max(0, Mathf.CeilToInt(s.remainingSeconds));
+            if (!string.IsNullOrWhiteSpace(s.displayName))
+                names.Add($"{s.displayName} {secs}s");
+        }
+        return names.ToArray();
+    }
+
+    public struct BuffStatus
+    {
+        public string buffId;
+        public string displayName;
+        public float remainingSeconds;
+        public float fireRateMult;
+        public float speedMult;
+        public float damageMult;
+        public bool drainWhileUsed;
+    }
+
+    /// <summary>Active timed buffs sorted by display name (for HUD trays).</summary>
+    public BuffStatus[] GetActiveBuffStatuses()
+    {
+        var list = new List<BuffStatus>(active.Count);
+        foreach (var kvp in active)
+        {
+            ActiveBuff b = kvp.Value;
+            float remaining = b.drainWhileUsed ? b.remainingSeconds : (b.endTime - Time.time);
+            list.Add(new BuffStatus
+            {
+                buffId = kvp.Key,
+                displayName = string.IsNullOrWhiteSpace(b.displayName) ? kvp.Key : b.displayName,
+                remainingSeconds = Mathf.Max(0f, remaining),
+                fireRateMult = b.fireRateMult,
+                speedMult = b.speedMult,
+                damageMult = b.damageMult,
+                drainWhileUsed = b.drainWhileUsed
+            });
         }
 
-        names.Sort(StringComparer.Ordinal);
-        return names.ToArray();
+        list.Sort((a, b) => string.CompareOrdinal(a.displayName, b.displayName));
+        return list.ToArray();
     }
 
     public void ClearAllBuffs()
@@ -173,6 +266,15 @@ public class PlayerBuffController : MonoBehaviour
         active.Clear();
         ApplyCombinedBuffs();
         NotifyPowerUpsChanged();
+    }
+
+    /// <summary>Re-read motor base speed/jump after a character loadout changes moveSpeed.</summary>
+    public void RecacheBaseValues()
+    {
+        baseSpeed = -1f;
+        baseJump = -1f;
+        CacheBaseValues();
+        ApplyCombinedBuffs();
     }
 
     void CacheBaseValues()
@@ -194,17 +296,22 @@ public class PlayerBuffController : MonoBehaviour
         float jumpMult = 1f;
         float dmgMult = 1f;
         float rofMult = 1f;
+        float reloadMult = 1f;
 
         foreach (var kvp in active)
         {
-            speedMult *= kvp.Value.speedMult;
+            // Drain-while-used speed buffs only apply while sprinting (motor handles them).
+            if (!(kvp.Value.drainWhileUsed && kvp.Value.speedMult > 1.001f))
+                speedMult *= kvp.Value.speedMult;
             jumpMult *= kvp.Value.jumpMult;
             dmgMult *= kvp.Value.damageMult;
             rofMult *= kvp.Value.fireRateMult;
+            reloadMult *= kvp.Value.reloadMult;
         }
 
         CombinedDamageMultiplier = dmgMult;
         CombinedFireRateMultiplier = rofMult;
+        CombinedReloadMultiplier = reloadMult;
 
         PlanetMotor_InputSystem explicitMotor = motor as PlanetMotor_InputSystem;
         if (explicitMotor != null)

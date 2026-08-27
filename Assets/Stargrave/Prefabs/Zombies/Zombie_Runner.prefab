@@ -312,7 +312,7 @@ Transform:
   m_PrefabAsset: {fileID: 0}
   m_GameObject: {fileID: 1630471500285173030}
   serializedVersion: 2
-  m_LocalRotation: {x: 0.030971779, y: 0.030524252, z: -0.0008921604, w: 0.99905366}
+  m_LocalRotation: {x: 0.030971777, y: 0.030524252, z: -0.00089216034, w: 0.99905366}
   m_LocalPosition: {x: -3.7252902e-11, y: 0.0010213042, z: -0.0000000034901313}
   m_LocalScale: {x: 0.9999997, y: 1.0000004, z: 1}
   m_ConstrainProportionsScale: 0
@@ -755,7 +755,7 @@ SkinnedMeshRenderer:
   m_Quality: 0
   m_UpdateWhenOffscreen: 1
   m_SkinnedMotionVectors: 1
-  m_Mesh: {fileID: -4910155946660035214, guid: 5f5df5cf1a1330741ad14222b8982f36, type: 3}
+  m_Mesh: {fileID: -4910155946660035214, guid: 18f171121132ea84ea6c561add1549ab, type: 3}
   m_Bones:
   - {fileID: 4724323255191188429}
   - {fileID: 4644707736572607785}
@@ -1269,6 +1269,7 @@ GameObject:
   - component: {fileID: 8230094639532159984}
   - component: {fileID: 2869515156271071306}
   - component: {fileID: 1725707623457768270}
+  - component: {fileID: 6814850994259720431}
   m_Layer: 0
   m_Name: CharacterModel
   m_TagString: Untagged
@@ -1302,8 +1303,8 @@ Animator:
   m_PrefabAsset: {fileID: 0}
   m_GameObject: {fileID: 5210192862018273481}
   m_Enabled: 1
-  m_Avatar: {fileID: 9000000, guid: 590120522d16b384b96bbf93d67b2668, type: 2}
-  m_Controller: {fileID: 9100000, guid: 5c973dfbaa9e1894a9537290f5c6a83c, type: 2}
+  m_Avatar: {fileID: 9000000, guid: 18f171121132ea84ea6c561add1549ab, type: 3}
+  m_Controller: {fileID: 9100000, guid: a12365fb46ccdc045830cb302429d06a, type: 2}
   m_CullingMode: 0
   m_UpdateMode: 0
   m_ApplyRootMotion: 0
@@ -1331,6 +1332,18 @@ MonoBehaviour:
   idleStateName: Idle
   walkStateName: Walk
   moveThreshold: 0.15
+--- !u!114 &6814850994259720431
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 5210192862018273481}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: f8adfb15bf981084aa78a43f2baaf4eb, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::FittedVisualScaleLock
 --- !u!1 &5466444598109716317
 GameObject:
   m_ObjectHideFlags: 0
@@ -1451,7 +1464,7 @@ Transform:
   m_PrefabAsset: {fileID: 0}
   m_GameObject: {fileID: 5882404519891081135}
   serializedVersion: 2
-  m_LocalRotation: {x: -0.015675768, y: 0.0011517383, z: 0.9946256, w: -0.10233646}
+  m_LocalRotation: {x: -0.015675768, y: 0.0011517382, z: 0.9946256, w: -0.10233645}
   m_LocalPosition: {x: -0.0002867288, y: 0.0030693286, z: -0.000007687028}
   m_LocalScale: {x: 0.99999344, y: 0.99999994, z: 1}
   m_ConstrainProportionsScale: 0
@@ -1641,7 +1654,7 @@ Transform:
   m_PrefabAsset: {fileID: 0}
   m_GameObject: {fileID: 6726729517486084165}
   serializedVersion: 2
-  m_LocalRotation: {x: 0.00073369127, y: 0.0047674924, z: -0.04707186, w: 0.99887985}
+  m_LocalRotation: {x: 0.0007336912, y: 0.0047674924, z: -0.047071856, w: 0.99887985}
   m_LocalPosition: {x: 1.5366822e-10, y: 0.004707749, z: 0.0000000024519977}
   m_LocalScale: {x: 1, y: 1, z: 1.0000001}
   m_ConstrainProportionsScale: 0
@@ -1846,6 +1859,11 @@ MonoBehaviour:
   sfxMixerGroup: {fileID: 0}
   hitVfxPrefab: {fileID: 0}
   deathVfxPrefab: {fileID: 0}
+  deathFallHoldSeconds: 1.35
+  proceduralFallSeconds: 0.85
+  deathSinkDistance: 2.8
+  deathSinkSeconds: 35
+  deathSurfaceClearance: 0.01
   animator: {fileID: 2869515156271071306}
   locomotion: {fileID: 0}
   locomotionIdle: {fileID: 0}

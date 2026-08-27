@@ -69,9 +69,12 @@ public class Planet : MonoBehaviour
 
     public void GeneratePlanet()
     {
+        // Bake pads before mesh build so TerrainFace vertices + analytic APIs share the same height field.
+        PlanetBuildingPads.BakeFromScene(this);
         Initialize();
         GenerateMesh();
         GenerateColours();
+        PlanetBuildingPads.NotifyFoliageConsumers();
     }
 
     IEnumerator Start()

@@ -45,6 +45,7 @@ Shader "Stargrave/Planet Atmosphere Fresnel"
 
             float3 _PlanetCenterWS;
             float3 _SunDirWS;
+            float _PlayerSunAmount;
 
             struct Attributes
             {
@@ -80,8 +81,11 @@ Shader "Stargrave/Planet Atmosphere Fresnel"
 
                 float3 rad = normalize(input.positionWS - _PlanetCenterWS);
                 float3 sun = normalize(_SunDirWS);
-                half sunFace = saturate(dot(rad, sun));
-                half day = pow(sunFace, _DayRimCurve);
+                half sunFace = smoothstep(-0.35h, 0.45h, (half)dot(rad, sun));
+                sunFace = sunFace * sunFace * (3.0h - 2.0h * sunFace);
+                half day = pow(sunFace, _DayRimCurve * 0.85h);
+                half playerSun = saturate((half)_PlayerSunAmount);
+                day *= playerSun;
                 half nightScale = lerp(_NightRimMul, 1.0h, day);
 
                 half3 glow = _RimColor.rgb * rim * _Intensity * nightScale;

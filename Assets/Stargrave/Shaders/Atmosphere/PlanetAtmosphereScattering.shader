@@ -9,8 +9,8 @@ Shader "Stargrave/Planet Atmosphere Scattering"
         _MiePower ("Mie Power", Range(1, 32)) = 8
         _NightEmission ("Night Emission", Range(0, 0.6)) = 0.05
         _NightSkyVisibility ("Night Sky Visibility", Range(0, 1)) = 0.75
-        _SunsetColor ("Sunset Color", Color) = (1.0, 0.52, 0.2, 1)
-        _SunsetStrength ("Sunset Strength", Range(0, 2)) = 0.9
+        _SunsetColor ("Sunset Color", Color) = (1.0, 0.62, 0.38, 1)
+        _SunsetStrength ("Sunset Strength", Range(0, 2)) = 0.55
     }
 
     SubShader
@@ -55,6 +55,10 @@ Shader "Stargrave/Planet Atmosphere Scattering"
             float3 _SunDirWS;
             float _PlanetRadius;
             float _AtmosphereRadius;
+            // Open-sky daylight from sun elevation (0..1). Not player LoS shade.
+            float _PlayerSunAmount;
+            // Golden-hour warmth (0..1) when the sun is near the horizon.
+            float _PlayerTwilight;
 
             struct Attributes
             {
@@ -93,40 +97,54 @@ Shader "Stargrave/Planet Atmosphere Scattering"
                 float localDensity = saturate(pow(thicknessRatio * 12.0, 0.75));
                 localDensity = pow(localDensity, 1.0 / max(_DensityFalloff, 0.25));
 
-                // Single symmetric view term (avoids a brightness jump when raw dot crosses 0 vs abs(·) elsewhere).
                 float vAlign = saturate(abs(dot(radial, viewDir)));
-                float horizon = pow(saturate(1.0 - vAlign), 1.6);
-                // Zenith must use the same vAlign as horizon (was raw dot — caused a step when pitching on day side).
+                float horizon = pow(saturate(1.0 - vAlign), 1.55);
                 float zenith = pow(saturate(vAlign * 0.5 + 0.5), 1.05);
                 float sunFacing = dot(radial, sunDir);
-                // Wide smooth twilight band (wider input range = gentler derivative near full day).
-                float twilight = smoothstep(-0.28, 0.42, sunFacing);
-                float dayScatter = pow(saturate(sunFacing * 0.5 + 0.5), 0.9) * _SunIntensity * twilight;
-                float nightBase = lerp(_NightEmission, _NightEmission * 0.35, twilight);
+
+                // Sky daylight clock (elevation). Shade must not kill the sky.
+                float skyDay = saturate(_PlayerSunAmount);
+                float golden = saturate(_PlayerTwilight);
+
+                // Soft day limb from geometry; brightness still follows skyDay.
+                float dayLimb = smoothstep(-0.35, 0.45, sunFacing);
+                dayLimb = dayLimb * dayLimb * (3.0 - 2.0 * dayLimb);
+                float dayScatter = pow(saturate(sunFacing * 0.5 + 0.5), 0.9) * _SunIntensity * dayLimb * skyDay;
+
+                // Night residual: rises as skyDay falls.
+                float nightBase = _NightEmission * (1.0 - skyDay * 0.92);
                 nightBase *= lerp(1.0, 0.14, _NightSkyVisibility);
-                // Soft day floor: fades out toward zenith so max(·, hard floor) cannot create a sudden step.
-                float dayCoverageFloor = twilight * 0.48 * (1.0 - smoothstep(0.32, 0.97, vAlign));
+
                 float limbToZenith = smoothstep(0.04, 0.96, vAlign);
-                float skyCoverage = lerp(horizon, zenith * 0.72, limbToZenith);
-                skyCoverage = skyCoverage + (1.0 - skyCoverage) * dayCoverageFloor;
-                skyCoverage = saturate(skyCoverage);
-                float sunsetBand = smoothstep(-0.22, 0.12, sunFacing) * (1.0 - smoothstep(0.12, 0.48, sunFacing));
-                float sunsetAmount = sunsetBand * horizon * _SunsetStrength;
+                float skyCoverage = lerp(horizon, zenith * 0.7, limbToZenith);
+                // Soft day floor so looking up on the day side stays filled.
+                float dayFloor = skyDay * 0.38 * (1.0 - smoothstep(0.35, 0.98, vAlign));
+                skyCoverage = saturate(skyCoverage + (1.0 - skyCoverage) * dayFloor);
+
+                // Golden hour: warm flush on the sun-side horizon (rose at dawn, amber at dusk).
+                float sunsetBand = smoothstep(-0.35, 0.15, sunFacing) * (1.0 - smoothstep(0.15, 0.65, sunFacing));
+                float sunsetAmount = sunsetBand * (horizon * 0.9 + 0.25) * _SunsetStrength * golden;
 
                 float mu = saturate(dot(viewDir, sunDir));
-                // Broad smooth rolloff toward sun — avoids a narrow band that “pops” when mu crosses a threshold.
                 float muEase = smoothstep(0.12, 0.94, mu);
-                float mieCore = pow(mu, _MiePower) * _MieStrength * smoothstep(0.0, 0.65, twilight);
-                float mie = mieCore * (1.0 - 0.55 * muEase * muEase) * 0.58;
+                float mie = pow(mu, _MiePower) * _MieStrength * skyDay * (0.45 + 0.55 * dayLimb);
+                mie *= (1.0 - 0.5 * muEase * muEase);
+                // Soft warm glow around the sun during golden hour.
+                mie += pow(mu, max(_MiePower * 0.5, 2.0)) * _MieStrength * 0.28 * golden * sunsetBand;
 
-                float dayAmbientZenith = zenith * twilight * _SunIntensity * 0.18 * (1.0 - 0.35 * muEase);
-                float brightness = localDensity * (skyCoverage * (dayScatter + mie) + dayAmbientZenith + nightBase);
-                float nightFade = 1.0 - twilight;
-                float skyboxPreserve = lerp(1.0, 1.0 - 0.82 * nightFade, _NightSkyVisibility);
+                float dayZenith = zenith * skyDay * _SunIntensity * 0.16 * (1.0 - 0.3 * muEase);
+                float goldenWash = (horizon * 0.45 + zenith * 0.08) * golden * _SunsetStrength * 0.22;
+
+                float brightness = localDensity * (skyCoverage * (dayScatter + mie) + dayZenith + nightBase + goldenWash);
+
+                float nightFade = 1.0 - skyDay;
+                nightFade = nightFade * nightFade * (3.0 - 2.0 * nightFade);
+                float skyboxPreserve = lerp(1.0, 1.0 - 0.8 * nightFade, _NightSkyVisibility);
                 brightness *= skyboxPreserve;
+
                 float3 tint = lerp(_ScatteringColor.rgb, _SunsetColor.rgb, saturate(sunsetAmount));
+                tint = lerp(tint, _SunsetColor.rgb, saturate(golden * 0.22));
                 float3 col = tint * brightness;
-                // Single smooth shoulder (no stacked rcp + hard min — those caused visible knees when pitching).
                 col = col / (1.0 + col * float3(0.62, 0.58, 0.52));
 
                 return half4(col, 1);

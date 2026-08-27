@@ -119,7 +119,12 @@ public class CombatTargeting : MonoBehaviour
         {
             var planet = tagged.GetComponentInParent<Planet>();
             _planetCenterCached = planet != null ? planet.transform : tagged.transform;
+            return;
         }
+
+        Planet found = Object.FindFirstObjectByType<Planet>(FindObjectsInactive.Exclude);
+        if (found != null)
+            _planetCenterCached = found.transform;
     }
 
     Vector3 ResolvePlanetUpAt(Vector3 worldPos, Vector3 fallbackUp)
@@ -367,7 +372,7 @@ public class CombatTargeting : MonoBehaviour
     bool TryValidateSustainedLockOn(Camera cam, ZombieAI zombie, out Vector3 aimPoint)
     {
         aimPoint = Vector3.zero;
-        if (cam == null || zombie == null || !zombie.isActiveAndEnabled)
+        if (cam == null || zombie == null || !zombie.isActiveAndEnabled || zombie.IsDead)
             return false;
 
         if (!TryGetZombieAimPoint(zombie, out aimPoint))
@@ -392,7 +397,7 @@ public class CombatTargeting : MonoBehaviour
     {
         candidate = new LockOnCandidate();
 
-        if (cam == null || zombie == null || !zombie.isActiveAndEnabled)
+        if (cam == null || zombie == null || !zombie.isActiveAndEnabled || zombie.IsDead)
             return false;
 
         Vector3 aimPoint;
@@ -726,7 +731,7 @@ public class CombatTargeting : MonoBehaviour
         for (int i = 0; i < zombies.Length; i++)
         {
             ZombieAI candidateZombie = zombies[i];
-            if (candidateZombie == null || !candidateZombie.isActiveAndEnabled)
+            if (candidateZombie == null || !candidateZombie.isActiveAndEnabled || candidateZombie.IsDead)
                 continue;
 
             Vector3 candidatePoint;

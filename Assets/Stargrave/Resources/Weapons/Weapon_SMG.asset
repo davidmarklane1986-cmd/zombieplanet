@@ -1,0 +1,36 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 33b6613516d14ba7ac1dc3f2abe4a2ae, type: 3}
+  m_Name: Weapon_SMG
+  m_EditorClassIdentifier: Assembly-CSharp::WeaponDef
+  id: smg
+  displayName: SMG
+  heldVisualPrefab: {fileID: 6472367368561510228, guid: 4042ed489de8c0e47831830a6e6425f3, type: 3}
+  worldPickupPrefab: {fileID: 8274476117687484535, guid: 170d86a48ef05974a95006f7bbeff023, type: 3}
+  projectileColor: {r: 0.85, g: 0.35, b: 1, a: 1}
+  heldLocalEulerDegrees: {x: -90, y: 180, z: 90}
+  heldWorldLength: 0.42
+  fireCooldown: 0.09
+  reloadDuration: 1.6
+  shotsPerMagazine: 18
+  damagePerShot: 1
+  pelletCount: 1
+  spreadDegrees: 3.5
+  burstCount: 1
+  burstShotInterval: 0.05
+  damageFalloffStart: 10
+  damageFalloffEnd: 30
+  damageFalloffMinMultiplier: 0.3
+  lootClipsMin: 2
+  lootClipsMax: 5
+  lootAmmo: 40
+  dropWeight: 1.05

@@ -16,14 +16,23 @@ public class PlayerCharacterAlign : MonoBehaviour
 
     [Tooltip("Rotate the model this many degrees clockwise (from above). 0 = default facing.")]
     [Range(-30f, 30f)]
-    public float rotationOffsetDegrees = 8f;
+    public float rotationOffsetDegrees = 0f;
 
     CapsuleCollider _cap;
 
     void Awake()
     {
         _cap = GetComponent<CapsuleCollider>();
-        if (_cap == null) return;
+        RealignNow();
+    }
+
+    /// <summary>Re-run alignment after a character loadout swaps the visual under CharacterModel.</summary>
+    public void RealignNow()
+    {
+        if (_cap == null)
+            _cap = GetComponent<CapsuleCollider>();
+        if (_cap == null)
+            return;
 
         Transform model = characterModel;
         if (model == null)
@@ -53,14 +62,16 @@ public class PlayerCharacterAlign : MonoBehaviour
         model.localPosition = _cap.center - axis * halfH + axis * modelHeightOffset;
         float yaw = 180f - rotationOffsetDegrees; // face away from camera; negative offset = clockwise
         model.localRotation = Quaternion.Euler(0f, yaw, 0f);
-        model.localScale = Vector3.one;
+        // Keep whatever scale the loadout/prefab set on the visual child; only normalize the root if empty.
+        if (model.childCount == 0)
+            model.localScale = Vector3.one;
 
         // Match planet matte shading (no skybox silver fill at night).
         foreach (var r in model.GetComponentsInChildren<Renderer>(true))
         {
             var mats = r.materials;
             for (int i = 0; i < mats.Length; i++)
-                ModelMatteLighting.MakeMatte(mats[i]);
+                ModelMatteLighting.MakeMatte(mats[i], ambientFill: ModelMatteLighting.PlayerAmbientFill);
             r.materials = mats;
         }
 
@@ -93,7 +104,7 @@ public class PlayerCharacterAlign : MonoBehaviour
         if (model == null) return;
 
         int d = _cap.direction;
-        Vector3 ax = d == 0 ? Vector3.right : (d == 1 ? Vector3.up : Vector3.forward);
+        Vector3 ax = d == 0 ? Vector3.right : (d == 1 ? Vector3.up : d == 2 ? Vector3.forward : Vector3.up);
         float half = _cap.height * 0.5f;
         model.localPosition = _cap.center - ax * half + ax * modelHeightOffset;
         float yaw = 180f - rotationOffsetDegrees;

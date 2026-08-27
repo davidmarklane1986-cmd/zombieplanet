@@ -32,10 +32,10 @@ public class ZombieSpawner : MonoBehaviour
     public int SteadyPopulationTarget => Mathf.Clamp(zombieCount, 0, Mathf.Max(1, maxAliveZombies));
 
     [Header("Population")]
-    [Min(0)] public int zombieCount = 8;
+    [Min(0)] public int zombieCount = 16;
     [Min(1)]
-    [Tooltip("Max simultaneous zombies from initial burst + maintain top-up.")]
-    public int maxAliveZombies = 16;
+    [Tooltip("Hard cap for the escalating horde. Kills spawn extras until this many are alive.")]
+    public int maxAliveZombies = 10000;
     [Min(0.2f)] public float maintainCheckIntervalSeconds = 3f;
     [Min(1)]
     [Tooltip("Avoid spawning every missing zombie in one frame.")]
@@ -47,10 +47,10 @@ public class ZombieSpawner : MonoBehaviour
     [Range(0f, 80f)] public float oppositeSpawnConeAngleDegrees = 22f;
     [Min(0f)] public float respawnDelaySeconds = 2f;
     [Min(1)]
-    [Tooltip("How many zombies spawn after each kill. 1 = replace the killed one on the opposite side.")]
-    public int respawnsPerKill = 1;
+    [Tooltip("How many horde agents spawn after each kill. 10 = the swarm grows fast until the 10k cap.")]
+    public int respawnsPerKill = 10;
     [Tooltip("Extra world units above sea level required for a valid spawn (keeps feet dry).")]
-    [Min(0f)] public float spawnDryClearance = 0.75f;
+    [Min(0f)] public float spawnDryClearance = 1.25f;
     [Min(1f)] public float spawnDistanceFromPlayer = 26f;
     [Range(1f, 90f)] public float spawnConeAngleDegrees = 40f;
     [Min(1)]
@@ -80,6 +80,8 @@ public class ZombieSpawner : MonoBehaviour
     bool _initialSpawnComplete;
     int _zombieLayer = -1;
 
+    const int HardMaxAlive = 10000;
+
     void Awake()
     {
         if (Instance != null && Instance != this)
@@ -88,6 +90,22 @@ public class ZombieSpawner : MonoBehaviour
             return;
         }
         Instance = this;
+        ClampPopulationSettings();
+        if (GetComponent<ZombieHordeSim>() == null)
+            gameObject.AddComponent<ZombieHordeSim>();
+    }
+
+    void OnValidate()
+    {
+        ClampPopulationSettings();
+    }
+
+    void ClampPopulationSettings()
+    {
+        maxAliveZombies = Mathf.Clamp(maxAliveZombies, 1, HardMaxAlive);
+        zombieCount = Mathf.Clamp(zombieCount, 0, maxAliveZombies);
+        respawnsPerKill = Mathf.Clamp(respawnsPerKill, 1, 10);
+        maxSpawnsPerMaintainTick = Mathf.Clamp(maxSpawnsPerMaintainTick, 1, 4);
     }
 
     void OnDestroy()
@@ -99,6 +117,9 @@ public class ZombieSpawner : MonoBehaviour
     void Start()
     {
         _zombieLayer = LayerMask.NameToLayer(zombieLayerName);
+        var horde = GetComponent<ZombieHordeSim>();
+        if (horde != null)
+            horde.Configure(this);
         if (PickPrefab() == null)
         {
             Debug.LogWarning("ZombieSpawner: no zombie prefab / variants assigned.");
@@ -153,11 +174,16 @@ public class ZombieSpawner : MonoBehaviour
     IEnumerator CoHardResetPopulationToInitial()
     {
         _initialSpawnComplete = false;
+        if (ZombieHordeSim.Instance != null)
+            ZombieHordeSim.Instance.Clear();
         ZombieAI[] zombies = Object.FindObjectsByType<ZombieAI>(FindObjectsInactive.Exclude);
         for (int i = 0; i < zombies.Length; i++)
         {
-            if (zombies[i] != null)
-                Destroy(zombies[i].gameObject);
+            if (zombies[i] == null)
+                continue;
+            if (ZombieHordeSim.HasInstance && ZombieHordeSim.Instance.Owns(zombies[i]))
+                continue;
+            Destroy(zombies[i].gameObject);
         }
 
         yield return null;
@@ -224,7 +250,7 @@ public class ZombieSpawner : MonoBehaviour
         {
             if (PickPrefab() != null)
             {
-                int alive = ZombieAI.LivingCount;
+        int alive = ZombieHordeSim.HasInstance ? ZombieHordeSim.Instance.Alive : ZombieAI.LivingCount;
                 int needed = Mathf.Max(0, steadyTarget - alive);
                 int spawnThisTick = Mathf.Min(needed, maxSpawnsPerMaintainTick);
                 for (int i = 0; i < spawnThisTick; i++)
@@ -265,7 +291,7 @@ public class ZombieSpawner : MonoBehaviour
 
         for (int s = 0; s < spawnCount; s++)
         {
-            if (ZombieAI.LivingCount >= maxAliveZombies)
+            if (ZombieHordeSim.HasInstance && ZombieHordeSim.Instance.Alive >= maxAliveZombies)
                 yield break;
             // Kill respawns always go to the opposite hemisphere on dry land (or nearest dry land there).
             Vector3 preferredDirection = GetSpawnDirectionOppositePlayer(GetPlanetCenter());
@@ -305,6 +331,10 @@ public class ZombieSpawner : MonoBehaviour
         if (prefab == null)
             return;
 
+        var horde = ZombieHordeSim.Instance ?? GetComponent<ZombieHordeSim>();
+        if (horde != null && horde.Alive >= Mathf.Min(maxAliveZombies, ZombieHordeSim.MaxAgents))
+            return;
+
         RefreshPlanetCache(false);
         if (_cachedPlanet == null)
         {
@@ -326,6 +356,12 @@ public class ZombieSpawner : MonoBehaviour
             fallbackShellRadius,
             spawnDryClearance);
 
+        if (horde != null)
+        {
+            horde.TryAddAgent(spawnPos, 0);
+            return;
+        }
+
         Quaternion rot = Quaternion.identity;
         Vector3 up = (spawnPos - center).normalized;
         if (up.sqrMagnitude > 1e-6f)
@@ -336,9 +372,6 @@ public class ZombieSpawner : MonoBehaviour
         if (_zombieLayer >= 0)
             z.layer = _zombieLayer;
 
-        // Render-only view culling (same in-view + small border rule as the foliage system): cull RENDERING
-        // when off-screen while AI keeps running. Added here so it works even for an existing prefab that
-        // predates ZombieSetup adding the component. DisallowMultipleComponent => guard against double-add.
         if (z.GetComponent<ZombieVisibilityCuller>() == null)
             z.AddComponent<ZombieVisibilityCuller>();
     }

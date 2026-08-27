@@ -392,13 +392,29 @@ public class PlayerLookController : MonoBehaviour
     public MouseLook_Gravity mouseLook;
 
     [Header("Sensitivity")]
-    public float sensitivityX = 180f;
-    public float sensitivityY = 140f;
+    [Tooltip("Yaw degrees per mouse-pixel at 1.0x (frame-rate independent). ~0.15–0.25 is a common medium.")]
+    public float sensitivityX = 0.18f;
+    [Tooltip("Pitch degrees per mouse-pixel at 1.0x (frame-rate independent).")]
+    public float sensitivityY = 0.15f;
     [Header("Gamepad")]
     public float gamepadSensitivityX = 220f;
     public float gamepadSensitivityY = 180f;
     [Tooltip("Flip only right-stick horizontal look.")]
     public bool invertGamepadLookX = false;
+
+    public const string MouseSensPrefsKey = "Stargrave.MouseSensitivity";
+
+    /// <summary>Player-facing multiplier (0.25–3). Default 1.</summary>
+    public static float GetMouseSensitivityMultiplier()
+    {
+        return Mathf.Clamp(PlayerPrefs.GetFloat(MouseSensPrefsKey, 1f), 0.25f, 3f);
+    }
+
+    public static void SetMouseSensitivityMultiplier(float value)
+    {
+        PlayerPrefs.SetFloat(MouseSensPrefsKey, Mathf.Clamp(value, 0.25f, 3f));
+        PlayerPrefs.Save();
+    }
 
     [Header("Lock-On Turn")]
     public float lockOnYawDegreesPerSecond = 280f;
@@ -429,6 +445,7 @@ public class PlayerLookController : MonoBehaviour
 
     CombatTargeting _targeting;
     Rigidbody _rb;
+    PlanetMotor_InputSystem _motor;
     float _pitch;
     float _pendingYawFromMouse;
     float _manualLookInputTimer;
@@ -466,6 +483,7 @@ public class PlayerLookController : MonoBehaviour
     void Awake()
     {
         _rb = GetComponent<Rigidbody>();
+        TryGetComponent(out _motor);
         if (!TryGetComponent(out _targeting))
             _targeting = gameObject.AddComponent<CombatTargeting>();
         if (mouseLook == null)
@@ -484,6 +502,18 @@ public class PlayerLookController : MonoBehaviour
             gameplayCamera = Camera.main;
         if (_targeting != null && _targeting.combatCamera == null)
             _targeting.combatCamera = gameplayCamera != null ? gameplayCamera : Camera.main;
+    }
+
+    void BindCinemachineWorldUp()
+    {
+        Camera cam = gameplayCamera != null ? gameplayCamera : Camera.main;
+        if (cam == null)
+            return;
+        var brain = cam.GetComponent<CinemachineBrain>();
+        if (brain == null)
+            return;
+        if (brain.WorldUpOverride != transform)
+            brain.WorldUpOverride = transform;
     }
 
     float GetAdsMultiplier()
@@ -514,8 +544,11 @@ public class PlayerLookController : MonoBehaviour
 
         if (Mouse.current != null)
         {
-            _pendingYawFromMouse += mouseDelta.x * sensitivityX * dt;
-            pitchDelta += mouseDelta.y * sensitivityY * dt * vertSign;
+            // Mouse.delta is already per-frame pixel motion — do NOT multiply by deltaTime
+            // (that made look speed change with FPS). Gamepad sticks still use dt below.
+            float mouseMul = GetMouseSensitivityMultiplier();
+            _pendingYawFromMouse += mouseDelta.x * sensitivityX * mouseMul;
+            pitchDelta += mouseDelta.y * sensitivityY * mouseMul * vertSign;
         }
 
         if (Gamepad.current != null)
@@ -549,10 +582,12 @@ public class PlayerLookController : MonoBehaviour
             _pitch = Mathf.Clamp(_pitch + pitchDelta, effMin, effMax);
 
         cameraTarget.localRotation = Quaternion.Euler(_pitch, 0f, 0f);
+        BindCinemachineWorldUp();
     }
 
     void LateUpdate()
     {
+        BindCinemachineWorldUp();
         if (cameraTarget == null || _targeting == null)
             return;
 
@@ -645,7 +680,7 @@ public class PlayerLookController : MonoBehaviour
             }
 
             if (Mathf.Abs(step) > 1e-5f)
-                _rb.MoveRotation(Quaternion.AngleAxis(step, planetUp) * _rb.rotation);
+                ApplyBodyYaw(step, planetUp);
             return;
         }
 
@@ -658,10 +693,51 @@ public class PlayerLookController : MonoBehaviour
                 yaw += softYaw;
         }
 
-        if (Mathf.Abs(yaw) < 1e-6f)
-            return;
-
         Vector3 yawAxis = PlanetTangentBasis.ResolvePlanetUp(transform.position, _targeting != null ? _targeting.planetCenterOverride : null, transform.up);
-        _rb.MoveRotation(Quaternion.AngleAxis(yaw, yawAxis) * _rb.rotation);
+        if (Mathf.Abs(yaw) < 1e-6f)
+        {
+            if (_motor != null && _motor.IsInBoat)
+                ApplyBodyYaw(0f, yawAxis);
+            return;
+        }
+
+        ApplyBodyYaw(yaw, yawAxis);
+    }
+
+    /// <summary>
+    /// While seated in a boat the body is kinematic. Rebuild from planet-up + tangent forward
+    /// (FromToRotation twists as you sail around the globe).
+    /// </summary>
+    void ApplyBodyYaw(float yawDegrees, Vector3 yawAxis)
+    {
+        Vector3 planetUp = PlanetTangentBasis.ResolvePlanetUp(
+            transform.position,
+            _targeting != null ? _targeting.planetCenterOverride : null,
+            yawAxis.sqrMagnitude > 1e-8f ? yawAxis : transform.up);
+
+        if (_motor != null && _motor.IsInBoat)
+        {
+            if (planetUp.sqrMagnitude < 1e-8f)
+                planetUp = Vector3.up;
+            planetUp.Normalize();
+
+            Vector3 fwd = Vector3.ProjectOnPlane(transform.forward, planetUp);
+            if (fwd.sqrMagnitude < 1e-6f && cameraTarget != null)
+                fwd = Vector3.ProjectOnPlane(cameraTarget.forward, planetUp);
+            if (fwd.sqrMagnitude < 1e-6f)
+                fwd = Vector3.ProjectOnPlane(Vector3.forward, planetUp);
+            if (fwd.sqrMagnitude < 1e-6f)
+                fwd = Vector3.ProjectOnPlane(Vector3.right, planetUp);
+            fwd.Normalize();
+            if (Mathf.Abs(yawDegrees) > 1e-6f)
+                fwd = Quaternion.AngleAxis(yawDegrees, planetUp) * fwd;
+            Quaternion rot = Quaternion.LookRotation(fwd, planetUp);
+            transform.rotation = rot;
+            if (_rb != null)
+                _rb.rotation = rot;
+            return;
+        }
+
+        _rb.MoveRotation(Quaternion.AngleAxis(yawDegrees, planetUp) * _rb.rotation);
     }
 }

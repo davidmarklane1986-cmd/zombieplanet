@@ -1,0 +1,36 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 33b6613516d14ba7ac1dc3f2abe4a2ae, type: 3}
+  m_Name: Weapon_Handgun
+  m_EditorClassIdentifier: Assembly-CSharp::WeaponDef
+  id: handgun
+  displayName: Handgun
+  heldVisualPrefab: {fileID: 6459604891336469896, guid: 5fdfdf2e68623ce41bee324b77628e98, type: 3}
+  worldPickupPrefab: {fileID: 593367847935207714, guid: 3f7429bf40daf7a41a8bf366617192da, type: 3}
+  projectileColor: {r: 1, g: 0.35, b: 0.2, a: 1}
+  heldLocalEulerDegrees: {x: -90, y: 180, z: 90}
+  heldWorldLength: 0.42
+  fireCooldown: 0.14
+  reloadDuration: 1.1
+  shotsPerMagazine: 10
+  damagePerShot: 1
+  pelletCount: 1
+  spreadDegrees: 2
+  burstCount: 1
+  burstShotInterval: 0.06
+  damageFalloffStart: 12
+  damageFalloffEnd: 35
+  damageFalloffMinMultiplier: 0.35
+  lootClipsMin: 3
+  lootClipsMax: 5
+  lootAmmo: 30
+  dropWeight: 1.2

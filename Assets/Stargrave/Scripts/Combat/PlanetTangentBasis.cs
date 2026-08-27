@@ -25,11 +25,15 @@ public static class PlanetTangentBasis
         GameObject tagged = GameObject.FindGameObjectWithTag("Planet");
         if (tagged != null)
         {
-            var planet = tagged.GetComponentInParent<Planet>();
-            if (planet != null)
-                return GetPlanetUp(worldPosition, planet.transform.position);
+            var taggedPlanet = tagged.GetComponentInParent<Planet>();
+            if (taggedPlanet != null)
+                return GetPlanetUp(worldPosition, taggedPlanet.transform.position);
             return GetPlanetUp(worldPosition, tagged.transform.position);
         }
+
+        Planet planet = Object.FindFirstObjectByType<Planet>(FindObjectsInactive.Exclude);
+        if (planet != null)
+            return GetPlanetUp(worldPosition, planet.transform.position);
 
         if (fallbackUp.sqrMagnitude < 1e-10f)
             return Vector3.up;

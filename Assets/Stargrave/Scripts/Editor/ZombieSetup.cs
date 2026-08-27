@@ -77,9 +77,8 @@ public static class ZombieSetup
         new KennyAnimatedDef
         {
             id = "Walker", displayName = "Zombie Walker",
-            modelPath = "Assets/ThirdParty/Kenny/Charecters/Survivors/Model/characterMedium.fbx",
-            idlePath = "Assets/ThirdParty/Kenny/Charecters/Survivors/Animations/idle.fbx",
-            runPath = "Assets/ThirdParty/Kenny/Charecters/Survivors/Animations/run.fbx",
+            modelPath = StargravePlayableHumanoidImport.KennySurvivorsHumanoid,
+            idlePath = "", runPath = "",
             skinPath = "Assets/ThirdParty/Kenny/Charecters/Survivors/Skins/zombieA.png",
             moveSpeed = 3.0f, scale = 1.45f, weight = 48f,
             capsuleHeight = 1.85f, capsuleRadius = 0.32f
@@ -87,9 +86,8 @@ public static class ZombieSetup
         new KennyAnimatedDef
         {
             id = "Runner", displayName = "Zombie Runner",
-            modelPath = "Assets/ThirdParty/Kenny/Charecters/Survivors/Model/characterMedium.fbx",
-            idlePath = "Assets/ThirdParty/Kenny/Charecters/Survivors/Animations/idle.fbx",
-            runPath = "Assets/ThirdParty/Kenny/Charecters/Survivors/Animations/run.fbx",
+            modelPath = StargravePlayableHumanoidImport.KennySurvivorsHumanoid,
+            idlePath = "", runPath = "",
             skinPath = "Assets/ThirdParty/Kenny/Charecters/Survivors/Skins/zombieC.png",
             moveSpeed = 5.6f, scale = 1.35f, weight = 30f,
             capsuleHeight = 1.75f, capsuleRadius = 0.3f
@@ -97,9 +95,8 @@ public static class ZombieSetup
         new KennyAnimatedDef
         {
             id = "Brute", displayName = "Zombie Brute",
-            modelPath = "Assets/ThirdParty/Kenny/Charecters/Retro/Model/characterMedium.fbx",
-            idlePath = "Assets/ThirdParty/Kenny/Charecters/Retro/Animations/idle.fbx",
-            runPath = "Assets/ThirdParty/Kenny/Charecters/Retro/Animations/run.fbx",
+            modelPath = StargravePlayableHumanoidImport.KennyRetroHumanoid,
+            idlePath = "", runPath = "",
             skinPath = "Assets/ThirdParty/Kenny/Charecters/Retro/Skins/zombieMaleA.png",
             moveSpeed = 2.1f, scale = 1.85f, weight = 16f,
             capsuleHeight = 2.1f, capsuleRadius = 0.42f
@@ -107,9 +104,8 @@ public static class ZombieSetup
         new KennyAnimatedDef
         {
             id = "Stalker", displayName = "Zombie Stalker",
-            modelPath = "Assets/ThirdParty/Kenny/Charecters/Retro/Model/characterMedium.fbx",
-            idlePath = "Assets/ThirdParty/Kenny/Charecters/Retro/Animations/idle.fbx",
-            runPath = "Assets/ThirdParty/Kenny/Charecters/Retro/Animations/run.fbx",
+            modelPath = StargravePlayableHumanoidImport.KennyRetroHumanoid,
+            idlePath = "", runPath = "",
             skinPath = "Assets/ThirdParty/Kenny/Charecters/Retro/Skins/zombieFemaleA.png",
             moveSpeed = 4.2f, scale = 1.4f, weight = 16f,
             capsuleHeight = 1.8f, capsuleRadius = 0.3f
@@ -174,6 +170,7 @@ public static class ZombieSetup
         }
 
         EnsureFolders();
+        StargravePlayableHumanoidImport.EnsureHumanoidPipeline();
         var built = new List<ZombieSpawnVariant>();
 
         // Keep existing HUGO as a rare heavy type if present / creatable.
@@ -482,14 +479,14 @@ public static class ZombieSetup
     {
         if (AssetDatabase.LoadAssetAtPath<GameObject>(def.modelPath) == null)
         {
-            Debug.LogWarning($"[ZombieSetup] Missing model {def.modelPath}");
+            Debug.LogWarning($"[ZombieSetup] Missing Humanoid model {def.modelPath}");
             return null;
         }
 
         EnsureReadableTexture(def.skinPath);
         Material mat = GetOrCreateSkinMaterial(def.id, def.skinPath);
-        // Same stack as the player: AnimatorController + Animator.Play("Idle"|"Walk").
-        AnimatorController ctrl = GetOrCreateClipController(def.id, def.idlePath, def.runPath);
+        // Same farmer Humanoid retarget as playable Kenny (Idle / Walk / Death).
+        AnimatorController ctrl = GetOrCreateFarmerHumanoidZombieController(def.id);
 
         string prefabPath = $"{PrefabFolder}/Zombie_{def.id}.prefab";
         GameObject root = BuildGameplayRoot(
@@ -499,14 +496,97 @@ public static class ZombieSetup
 
         GameObject model = Object.Instantiate(AssetDatabase.LoadAssetAtPath<GameObject>(def.modelPath));
         model.name = "CharacterModel";
-        AttachKennyAnimatorLocomotion(root, model, ai, ctrl);
+        AttachKennyHumanoidLocomotion(root, model, ai, ctrl, def.modelPath);
         FitModelHeight(model, Mathf.Max(1.4f, def.capsuleHeight * 0.92f * (def.scale / 1.5f)));
+        var scaleLock = model.GetComponent<FittedVisualScaleLock>();
+        if (scaleLock != null)
+            scaleLock.SetLockedScale(model.transform.localScale);
         ApplyMaterialRecursive(model, mat);
         root.GetComponent<CharacterAlign>().Align();
 
         PrefabUtility.SaveAsPrefabAsset(root, prefabPath);
         Object.DestroyImmediate(root);
         return AssetDatabase.LoadAssetAtPath<GameObject>(prefabPath);
+    }
+
+    /// <summary>Humanoid farmer Idle/Walk/Death — retargets onto Kenny Humanoid avatars.</summary>
+    static AnimatorController GetOrCreateFarmerHumanoidZombieController(string id)
+    {
+        string path = $"{AnimFolder}/Zombie_{id}_FarmerHumanoid.controller";
+        if (AssetDatabase.LoadAssetAtPath<AnimatorController>(path) != null)
+            AssetDatabase.DeleteAsset(path);
+
+        AnimationClip idle = StargravePlayableHumanoidImport.LoadFirstClip(StargravePlayableHumanoidImport.FarmerIdleMenu);
+        AnimationClip run = StargravePlayableHumanoidImport.LoadFirstClip(StargravePlayableHumanoidImport.FarmerRunFront);
+        AnimationClip death = StargravePlayableHumanoidImport.LoadFirstClip(StargravePlayableHumanoidImport.FarmerDeath);
+
+        var ctrl = AnimatorController.CreateAnimatorControllerAtPath(path);
+        var sm = ctrl.layers[0].stateMachine;
+        while (sm.states.Length > 0)
+            sm.RemoveState(sm.states[0].state);
+
+        var idleState = sm.AddState("Idle", new Vector3(250, 0, 0));
+        idleState.motion = idle;
+        sm.defaultState = idleState;
+
+        var walkState = sm.AddState("Walk", new Vector3(500, 0, 0));
+        walkState.motion = run != null ? run : idle;
+
+        var deathState = sm.AddState("root|Death", new Vector3(250, 120, 0));
+        deathState.motion = death != null ? death : idle;
+
+        EditorUtility.SetDirty(ctrl);
+        return ctrl;
+    }
+
+    /// <summary>Player-style stack: Humanoid farmer clips + ZombieLocomotionAnimator.Play(Idle|Walk).</summary>
+    static void AttachKennyHumanoidLocomotion(GameObject root, GameObject model, ZombieAI ai,
+        RuntimeAnimatorController ctrl, string humanoidModelPath)
+    {
+        model.transform.SetParent(root.transform, false);
+        model.transform.localPosition = Vector3.zero;
+        model.transform.localRotation = Quaternion.identity;
+        model.transform.localScale = Vector3.one;
+
+        foreach (var c in model.GetComponentsInChildren<Collider>(true))
+            c.enabled = false;
+
+        foreach (var old in model.GetComponentsInChildren<Animator>(true))
+            Object.DestroyImmediate(old);
+        foreach (var old in model.GetComponentsInChildren<Animation>(true))
+            Object.DestroyImmediate(old);
+        foreach (var old in model.GetComponentsInChildren<KennyLocomotionDriver>(true))
+            Object.DestroyImmediate(old);
+        foreach (var old in model.GetComponentsInChildren<ZombieLocomotionAnimator>(true))
+            Object.DestroyImmediate(old);
+
+        var anim = model.AddComponent<Animator>();
+        anim.applyRootMotion = false;
+        anim.cullingMode = AnimatorCullingMode.AlwaysAnimate;
+        anim.runtimeAnimatorController = ctrl;
+
+        Avatar humanAvatar = StargravePlayableHumanoidImport.LoadEmbeddedAvatar(humanoidModelPath);
+        if (humanAvatar != null && humanAvatar.isValid)
+            anim.avatar = humanAvatar;
+        else
+            Debug.LogWarning($"[ZombieSetup] No valid Humanoid avatar for {humanoidModelPath}");
+
+        var loco = model.AddComponent<ZombieLocomotionAnimator>();
+        loco.animator = anim;
+        loco.idleStateName = "Idle";
+        loco.walkStateName = "Walk";
+
+        var scaleLock = model.GetComponent<FittedVisualScaleLock>();
+        if (scaleLock == null)
+            scaleLock = model.AddComponent<FittedVisualScaleLock>();
+
+        if (ai != null)
+        {
+            ai.locomotion = null;
+            ai.locomotionIdle = null;
+            ai.locomotionRun = null;
+            ai.animator = anim;
+        }
     }
 
     static GameObject BuildStaticKennyPrefab(KennyStaticDef def)
@@ -1305,10 +1385,17 @@ public static class ZombieSetup
 
             if (string.IsNullOrEmpty(b.path))
             {
+                // Empty path = Animator host. Strip transform curves (same as playable bake) so
+                // clips cannot overwrite FitModelHeight with Kenny ×100.
                 string prop = b.propertyName ?? "";
                 if (prop.IndexOf("Rotation", System.StringComparison.OrdinalIgnoreCase) >= 0 ||
+                    prop.IndexOf("Euler", System.StringComparison.OrdinalIgnoreCase) >= 0 ||
+                    prop.IndexOf("Scale", System.StringComparison.OrdinalIgnoreCase) >= 0 ||
+                    prop.IndexOf("Position", System.StringComparison.OrdinalIgnoreCase) >= 0 ||
                     prop.IndexOf("RootQ", System.StringComparison.OrdinalIgnoreCase) >= 0 ||
-                    prop.IndexOf("RootT", System.StringComparison.OrdinalIgnoreCase) >= 0)
+                    prop.IndexOf("RootT", System.StringComparison.OrdinalIgnoreCase) >= 0 ||
+                    prop.IndexOf("MotionT", System.StringComparison.OrdinalIgnoreCase) >= 0 ||
+                    prop.IndexOf("MotionQ", System.StringComparison.OrdinalIgnoreCase) >= 0)
                     continue;
             }
 
@@ -1461,7 +1548,7 @@ public static class ZombieSetup
                 mat.SetTexture("_MainTex", tex);
         }
         // Kill glossy skybox reflections that turn characters silver-grey at night.
-        ModelMatteLighting.MakeMatte(mat);
+        ModelMatteLighting.MakeMatte(mat, ambientFill: ModelMatteLighting.CharacterAmbientFill);
         EditorUtility.SetDirty(mat);
         return mat;
     }
@@ -1504,13 +1591,17 @@ public static class ZombieSetup
         spawner.variants = new List<ZombieSpawnVariant>(built);
         if (spawner.zombiePrefab == null && built.Count > 0)
             spawner.zombiePrefab = built[0].prefab;
-        // Cap population — huge counts make SampleAnimation too heavy and look like frozen statues.
-        if (spawner.zombieCount > 40)
-            spawner.zombieCount = 28;
-        if (spawner.maxAliveZombies > 60)
-            spawner.maxAliveZombies = 40;
-        if (spawner.respawnsPerKill > 2)
-            spawner.respawnsPerKill = 1;
+        // Horde sim: 10k instanced agents, 40 realized Kenny bodies.
+        if (spawner.maxAliveZombies > 10000)
+            spawner.maxAliveZombies = 10000;
+        if (spawner.maxAliveZombies < 80)
+            spawner.maxAliveZombies = 10000;
+        if (spawner.zombieCount > 32)
+            spawner.zombieCount = 16;
+        if (spawner.respawnsPerKill < 2)
+            spawner.respawnsPerKill = 10;
+        if (spawner.respawnsPerKill > 10)
+            spawner.respawnsPerKill = 10;
         if (spawner.maintainCheckIntervalSeconds < 1f)
             spawner.maintainCheckIntervalSeconds = 3f;
         EditorUtility.SetDirty(spawner);

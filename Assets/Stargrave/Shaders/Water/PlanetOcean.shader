@@ -29,12 +29,6 @@ Shader "Stargrave/Planet Ocean"
         _FresnelPower ("Fresnel Power", Range(0.1, 12)) = 4
         _FresnelStrength ("Fresnel Strength", Range(0, 1)) = 0.35
 
-        [Header(Day_Night lighting)]
-        // Keeps the water readable through dusk/night instead of crushing to black.
-        // Both are inert under a high sun, so the approved daytime look is unchanged.
-        _WaterMinLight ("Night Brightness Floor", Range(0, 1)) = 0.18
-        _WaterLightWrap ("Terminator Softness (wrap)", Range(0, 1)) = 0.25
-
         [Header(Waves (triplanar normals))]
         [Normal] _WaveNormalA ("Wave Normal A", 2D) = "bump" {}
         [Normal] _WaveNormalB ("Wave Normal B", 2D) = "bump" {}
@@ -124,8 +118,6 @@ Shader "Stargrave/Planet Ocean"
                 float _Smoothness;
                 float _FresnelPower;
                 float _FresnelStrength;
-                float _WaterMinLight;
-                float _WaterLightWrap;
                 float4 _WaveNormalA_ST;
                 float4 _WaveNormalB_ST;
                 float _WaveStrength;
@@ -430,50 +422,28 @@ Shader "Stargrave/Planet Ocean"
                 float3 detailDev = waveNormal - dot(waveNormal, geoNormal) * geoNormal;
                 float3 reliefNormal = normalize(geoNormal + (_WaveNormalStrength * waveDepthFactor) * detailDev);
 
-                // Main directional light (same source the terrain/atmosphere use).
+                // Main directional (sun). At night intensity is 0, so this drops out and the moon
+                // (additional directional) lights the water — no night floor or wrap.
                 Light mainLight = GetMainLight();
                 float3 dirToSun = normalize(mainLight.direction);
+                half nDotL = saturate(dot(reliefNormal, dirToSun));
+                half3 sunDiffuse = mainLight.color * nDotL;
 
-                // Day/night terminator from N.L against the sun direction (the same sun the terrain and
-                // atmosphere read), matching the terrain's natural URP response. Two controls keep the
-                // water readable through dusk/night without touching the daytime look:
-                //   - Wrap softens the terminator so sunset/sunrise fades gradually instead of crushing to
-                //     a hard near-black line: lit = saturate((N.L + wrap) / (1 + wrap)).
-                //   - Min-light floor keeps the night side above black; the deep-water colour is so dark
-                //     that with only SampleSH ambient it sinks well below the lit terrain beside it.
-                // Under a high sun N.L ~ 1, so both terms are inert and the approved daytime look stands.
-                // Diffuse reacts to the amplified TRIPLANAR relief normal, so the lit/shaded slopes follow
-                // the exact same organic pattern as the shimmer/specular (the "white bits" sit on the
-                // sun-facing wave faces). The day/night GATE for highlights stays on the smooth MACRO
-                // normal, so a sunlit wave face on the night side can't glint. Under a high sun all normals
-                // give N.L ~ 1, so the wrap + floor stay inert and the approved daytime look stands.
-                half nDotLRelief = dot(reliefNormal, dirToSun);                      // triplanar-pattern diffuse
-                half nDotLMacro = dot(sphereNormal, dirToSun);                       // smooth macro day/night
-                half nDotLDay = saturate(nDotLMacro);                                // hard day gate for highlights
-                half wrap = max(_WaterLightWrap, 1e-4);
-                half nDotLWrapped = saturate((nDotLRelief + wrap) / (1.0 + wrap));   // softened terminator
-                half lightTerm = max(nDotLWrapped, _WaterMinLight);                  // night brightness floor
-
-                // Sun specular (Seb's formulation) using the wave normal; day side only so it does not
-                // glint at night (gated by the hard, un-wrapped N.L).
                 float specularAngle = acos(saturate(dot(normalize(dirToSun - rayDir), waveNormal)));
                 float specularExponent = specularAngle / max(1.0 - _Smoothness, 1e-3);
-                float specularHighlight = exp(-specularExponent * specularExponent);
-                half3 specular = specularHighlight * nDotLDay * _SpecularColor.rgb;
+                half3 sunSpec = exp(-specularExponent * specularExponent) * nDotL
+                    * mainLight.color * _SpecularColor.rgb;
 
-                // Fresnel rim brighten toward grazing angles (day side only, gated by the hard N.L).
-                // Uses the triplanar relief normal so the rim tracks the same wave faces as the shading.
+                half3 addSpec;
+                half3 addDiffuse = StargraveApplyAdditionalLightsWater(
+                    surfaceWS, reliefNormal, waveNormal, rayDir, screenUV,
+                    _SpecularColor.rgb, _Smoothness, addSpec);
+
+                half3 totalDiffuse = sunDiffuse + addDiffuse;
                 half fresnel = pow(saturate(1.0 - saturate(dot(reliefNormal, -rayDir))), _FresnelPower);
-                half3 rim = fresnel * _FresnelStrength * nDotLDay * _SpecularColor.rgb;
+                half3 rim = fresnel * _FresnelStrength * totalDiffuse * _SpecularColor.rgb;
 
-                // Base water = sun diffuse (softened/floored) + environment ambient, then the day-only
-                // highlights. The floor + ambient together stop the night side reaching pure black.
-                // Point lights (player night light, etc.) use the same relief normal so shoreline and
-                // open water both pick up local illumination under Forward+.
-                half3 waterLit = oceanCol * mainLight.color * lightTerm + oceanCol * SampleSH(sphereNormal);
-                half3 additional = StargraveApplyAdditionalLights(
-                    surfaceWS, reliefNormal, screenUV, oceanCol);
-                oceanCol = waterLit + additional + specular + rim;
+                oceanCol = oceanCol * (totalDiffuse + SampleSH(sphereNormal)) + sunSpec + addSpec + rim;
                 half fogFactor = InitializeInputDataFog(float4(surfaceWS, 1.0), 0);
                 oceanCol = MixFog(oceanCol, fogFactor);
 

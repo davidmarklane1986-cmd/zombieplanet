@@ -8,6 +8,7 @@ public class PlayerHealth : MonoBehaviour
 {
     public static bool IsDead { get; private set; }
     public static event System.Action<PlayerHealth> Died;
+    public static event System.Action<int> HealthPacksChanged;
 
     [Header("Health")]
     [Min(1)] public int maxHealth = 100;
@@ -17,6 +18,8 @@ public class PlayerHealth : MonoBehaviour
     public float respawnInvulnerabilitySeconds = 1.25f;
     [Tooltip("Brief i-frames after each hit so a pack cannot dump every zombie's attack on the same frame.")]
     [Min(0f)] public float hitInvulnerabilitySeconds = 0.85f;
+    [Tooltip("Auto-consume a stored health pack when current HP falls to this fraction of max (or below).")]
+    [Range(0.05f, 1f)] public float autoHealHealthFraction = 0.75f;
 
     [Header("Spawn / Reset")]
     [Tooltip("If set, teleport here on respawn. Otherwise uses position/rotation captured at Start.")]
@@ -27,9 +30,13 @@ public class PlayerHealth : MonoBehaviour
     int _currentHealth;
     bool _dead;
     float _invulnerableUntil;
+    int _storedHealthPacks;
+    int _storedPackHealAmount = 35;
 
     /// <summary>Current hit points (0 while dead until respawn refills).</summary>
     public int CurrentHealth => _currentHealth;
+    /// <summary>Collected health packs waiting to auto-apply at/under the heal threshold.</summary>
+    public int StoredHealthPacks => _storedHealthPacks;
     Vector3 _spawnPosition;
     Quaternion _spawnRotation;
     Rigidbody _rb;
@@ -57,9 +64,25 @@ public class PlayerHealth : MonoBehaviour
         _currentHealth = maxHealth;
         _dead = false;
         IsDead = false;
+        _storedHealthPacks = 0;
+        HealthPacksChanged?.Invoke(0);
+        PlayerSwimStamina.EnsureOn(this)?.ResetStaminaFull();
     }
 
-    /// <summary>Instant heal (e.g. health pack pickup). Ignored while dead.</summary>
+    void Update()
+    {
+        TryAutoUseHealthPack();
+    }
+
+    /// <summary>Sets max HP from a character loadout and refills current HP when alive / on apply.</summary>
+    public void ApplyCharacterMaxHealth(int newMax)
+    {
+        maxHealth = Mathf.Max(1, newMax);
+        if (!_dead)
+            _currentHealth = maxHealth;
+    }
+
+    /// <summary>Instant heal (e.g. emergency). Ignored while dead.</summary>
     public void Heal(int amount)
     {
         if (_dead || amount <= 0)
@@ -67,28 +90,75 @@ public class PlayerHealth : MonoBehaviour
         _currentHealth = Mathf.Min(maxHealth, _currentHealth + amount);
     }
 
-    /// <summary>Extends invulnerability from power-ups / shield (stacks by taking the later expiry time).</summary>
+    /// <summary>Stock a health pack for later — auto-used when HP is at or below the threshold.</summary>
+    public void StoreHealthPack(int healAmount)
+    {
+        if (_dead)
+            return;
+        _storedPackHealAmount = Mathf.Max(1, healAmount);
+        _storedHealthPacks++;
+        HealthPacksChanged?.Invoke(_storedHealthPacks);
+        TryAutoUseHealthPack();
+    }
+
+    public void ClearStoredHealthPacks()
+    {
+        if (_storedHealthPacks == 0)
+            return;
+        _storedHealthPacks = 0;
+        HealthPacksChanged?.Invoke(0);
+    }
+
+    void TryAutoUseHealthPack()
+    {
+        if (_dead || _storedHealthPacks <= 0 || maxHealth <= 0)
+            return;
+        float threshold = maxHealth * Mathf.Clamp01(autoHealHealthFraction);
+        if (_currentHealth > threshold)
+            return;
+
+        _storedHealthPacks--;
+        Heal(_storedPackHealAmount);
+        HealthPacksChanged?.Invoke(_storedHealthPacks);
+
+        // Keep consuming while still under the threshold and packs remain.
+        if (_storedHealthPacks > 0 && _currentHealth <= threshold)
+            TryAutoUseHealthPack();
+    }
+
+    /// <summary>Extends invulnerability from power-ups / shield. Remaining time stacks additively.</summary>
     public void ExtendInvulnerability(float extraSeconds)
     {
         if (_dead || extraSeconds <= 0f)
             return;
-        _invulnerableUntil = Mathf.Max(_invulnerableUntil, Time.time + extraSeconds);
+        float remaining = Mathf.Max(0f, _invulnerableUntil - Time.time);
+        _invulnerableUntil = Time.time + remaining + extraSeconds;
     }
 
     /// <summary>Called by <see cref="ZombieAI"/> via SendMessage — do not rename.</summary>
     public void TakeDamage(int amount)
     {
-        if (_dead || Time.time < _invulnerableUntil)
+        TakeDamage(amount, ignoreInvulnerability: false);
+    }
+
+    /// <param name="ignoreInvulnerability">True for drowning so hit i-frames cannot stall death in water.</param>
+    public void TakeDamage(int amount, bool ignoreInvulnerability)
+    {
+        if (_dead)
+            return;
+        if (!ignoreInvulnerability && Time.time < _invulnerableUntil)
             return;
         if (amount <= 0)
             return;
 
         _currentHealth -= amount;
-        if (hitInvulnerabilitySeconds > 0f)
+        if (!ignoreInvulnerability && hitInvulnerabilitySeconds > 0f)
             _invulnerableUntil = Mathf.Max(_invulnerableUntil, Time.time + hitInvulnerabilitySeconds);
 
         // Distinct 2D hurt cue when the player actually takes damage (reuses the impact thud).
         AudioManager.PlayHit2D();
+
+        TryAutoUseHealthPack();
 
         if (_currentHealth > 0)
             return;
@@ -123,6 +193,11 @@ public class PlayerHealth : MonoBehaviour
 
         if (TryGetComponent(out PlayerBuffController buff))
             buff.ClearAllBuffs();
+        ClearStoredHealthPacks();
+        if (TryGetComponent(out PlayerSwimStamina swimStamina))
+            swimStamina.ResetStaminaFull();
+        else
+            PlayerSwimStamina.EnsureOn(this)?.ResetStaminaFull();
 
         SetGameplayEnabled(true);
         if (_anim != null)
@@ -132,6 +207,13 @@ public class PlayerHealth : MonoBehaviour
             ZombieSpawner.Instance.HardResetPopulationToInitial();
 
         RuntimeSceneRefs.InvalidatePlayer();
+    }
+
+    /// <summary>Updates the pose used by <see cref="RespawnNow"/> (e.g. after a new-run random relocate).</summary>
+    public void SetSpawnPose(Vector3 position, Quaternion rotation)
+    {
+        _spawnPosition = position;
+        _spawnRotation = rotation;
     }
 
     public void ResetForNewRun()

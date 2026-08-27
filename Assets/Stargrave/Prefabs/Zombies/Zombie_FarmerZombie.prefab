@@ -164,6 +164,11 @@ MonoBehaviour:
   sfxMixerGroup: {fileID: 0}
   hitVfxPrefab: {fileID: 0}
   deathVfxPrefab: {fileID: 0}
+  deathFallHoldSeconds: 1.35
+  proceduralFallSeconds: 0.85
+  deathSinkDistance: 2.8
+  deathSinkSeconds: 35
+  deathSurfaceClearance: 0.01
   animator: {fileID: 2795045976437482334}
   locomotion: {fileID: 0}
   locomotionIdle: {fileID: 0}

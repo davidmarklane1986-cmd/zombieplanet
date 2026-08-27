@@ -142,6 +142,7 @@ public sealed class ItemSpawner : MonoBehaviour
         }
 
         _activeItems.Clear();
+        WeaponPickup.ClearAll();
         SpawnSingleItem();
     }
 

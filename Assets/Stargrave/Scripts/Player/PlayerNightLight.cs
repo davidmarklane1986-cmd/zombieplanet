@@ -1,8 +1,8 @@
 using UnityEngine;
 
 /// <summary>
-/// Night lantern: local point fill pool + a weak camera-aimed directional for long-range night vision.
-/// Off in daylight, full at night, with a smooth dusk/dawn dim. Skips lighting PlayerVisual meshes.
+/// Optional local player fill (disabled by default). Does not light the world —
+/// gameplay uses sun + moon only via PlanetDayNightCycle.
 /// </summary>
 [DisallowMultipleComponent]
 public sealed class PlayerNightLight : MonoBehaviour
@@ -16,14 +16,10 @@ public sealed class PlayerNightLight : MonoBehaviour
     public float heightOffset = 5f;
     [ColorUsage(false, true)]
     public Color lightColor = new Color(1f, 0.88f, 0.68f, 1f);
-    [Tooltip("Intensity of the local point fill pool at full night.")]
-    [Min(0f)] public float nightIntensity = 10f;
-    [Tooltip("Radius of the local point fill pool (the lit circle around you).")]
-    [Min(1f)] public float fillRange = 4000f;
-
-    [Header("Forward directional (camera-aimed)")]
-    [Tooltip("Directional light intensity at full night. No distance falloff — lights what you're looking at far away.")]
-    [Min(0f)] public float directionalIntensity = 0.07f;
+    [Tooltip("Intensity of the local point fill pool at full night. 0 = lantern off.")]
+    [Min(0f)] public float nightIntensity = 0f;
+    [Tooltip("Radius of the local point fill pool.")]
+    [Min(1f)] public float fillRange = 48f;
 
     [Header("Day / Night dimming")]
     [Tooltip("Local sun elevation where the lantern starts fading in (1 = noon, 0 = horizon, -1 = midnight).")]
@@ -67,31 +63,28 @@ public sealed class PlayerNightLight : MonoBehaviour
     {
         EnsureLights();
         EnsurePlayerExcludedFromLight();
-        if (_fillLight == null || _spotLight == null)
+        if (_fillLight == null)
             return;
 
         Vector3 up = transform.up;
         Vector3 pos = transform.position + up * heightOffset;
-        Vector3 aim = GetCameraAim(up);
-
         _fillLight.transform.SetPositionAndRotation(pos, Quaternion.identity);
-        // Directional: orientation only (position unused). Aim with the camera.
-        _spotLight.transform.SetPositionAndRotation(pos, Quaternion.LookRotation(aim, up));
 
         float target = EvaluateLanternTarget(up);
         _lanternBlend = Mathf.MoveTowards(_lanternBlend, target, fadeSmoothSpeed * Time.deltaTime);
         float t = Mathf.SmoothStep(0f, 1f, _lanternBlend);
 
         float fillIntensity = nightIntensity * t;
-        float dirIntensity = directionalIntensity * t;
-        if (t <= 0.001f || (fillIntensity <= 0.001f && dirIntensity <= 0.001f))
+        if (t <= 0.001f || fillIntensity <= 0.001f)
         {
-            SetBothEnabled(false);
+            _fillLight.enabled = false;
+            _fillLight.intensity = 0f;
+            DisableLegacySpot();
             return;
         }
 
         ApplyLight(_fillLight, LightType.Point, fillIntensity, Mathf.Lerp(1f, fillRange, t));
-        ApplyLight(_spotLight, LightType.Directional, dirIntensity, 0f);
+        DisableLegacySpot();
         pointLight = _fillLight;
     }
 
@@ -115,31 +108,18 @@ public sealed class PlayerNightLight : MonoBehaviour
             light.range = range;
     }
 
-    void SetBothEnabled(bool on)
+    void DisableLegacySpot()
     {
-        if (_fillLight != null)
+        if (_spotLight == null)
         {
-            _fillLight.enabled = on;
-            if (!on) _fillLight.intensity = 0f;
+            Transform existing = transform.Find(SpotLightName);
+            if (existing != null)
+                _spotLight = existing.GetComponent<Light>();
         }
-        if (_spotLight != null)
-        {
-            _spotLight.enabled = on;
-            if (!on) _spotLight.intensity = 0f;
-        }
-    }
-
-    Vector3 GetCameraAim(Vector3 up)
-    {
-        Camera cam = Camera.main;
-        Vector3 aim = cam != null ? cam.transform.forward : transform.forward;
-        if (aim.sqrMagnitude < 1e-6f)
-            aim = transform.forward;
-        // Slight downward bias so ground ahead still catches the directional.
-        aim = (aim.normalized - up.normalized * 0.2f).normalized;
-        if (aim.sqrMagnitude < 1e-6f)
-            aim = Vector3.ProjectOnPlane(transform.forward, up).normalized;
-        return aim.sqrMagnitude > 1e-6f ? aim : transform.forward;
+        if (_spotLight == null)
+            return;
+        _spotLight.enabled = false;
+        _spotLight.intensity = 0f;
     }
 
     float EvaluateLanternTarget(Vector3 planetUp)
@@ -151,7 +131,9 @@ public sealed class PlayerNightLight : MonoBehaviour
             return Mathf.SmoothStep(0f, 1f, Mathf.Clamp01(Mathf.InverseLerp(0.75f, 0.95f, ambientNight)));
         }
 
-        Vector3 toSun = -sun.transform.forward;
+        Vector3 toSun = PlanetDayNightCycle.TowardSunWS.sqrMagnitude > 1e-8f
+            ? PlanetDayNightCycle.TowardSunWS.normalized
+            : -sun.transform.forward;
         float sunElev = Vector3.Dot(planetUp.normalized, toSun);
         float dusk = fadeInSunElev;
         float fullNight = Mathf.Min(fadeFullSunElev, dusk - 0.01f);
@@ -160,10 +142,14 @@ public sealed class PlayerNightLight : MonoBehaviour
 
     Light ResolveSun()
     {
-        if (RenderSettings.sun != null)
+        if (PlanetDayNightCycle.ActiveSunLight != null &&
+            PlanetDayNightCycle.IsEligibleSunLight(PlanetDayNightCycle.ActiveSunLight))
+            return PlanetDayNightCycle.ActiveSunLight;
+
+        if (PlanetDayNightCycle.IsEligibleSunLight(RenderSettings.sun))
             return RenderSettings.sun;
 
-        if (_cachedSun != null && _cachedSun.isActiveAndEnabled && _cachedSun.type == LightType.Directional)
+        if (_cachedSun != null && PlanetDayNightCycle.IsEligibleSunLight(_cachedSun))
             return _cachedSun;
 
         if (Time.unscaledTime < _nextSunResolveTime)
@@ -174,7 +160,7 @@ public sealed class PlayerNightLight : MonoBehaviour
         float bestIntensity = -1f;
         foreach (Light L in Object.FindObjectsByType<Light>(FindObjectsInactive.Exclude))
         {
-            if (L == null || L.type != LightType.Directional || !L.isActiveAndEnabled)
+            if (!PlanetDayNightCycle.IsEligibleSunLight(L))
                 continue;
             if (L.intensity > bestIntensity)
             {
@@ -189,14 +175,13 @@ public sealed class PlayerNightLight : MonoBehaviour
     void EnsureLights()
     {
         _fillLight = EnsureNamedLight(FillLightName, "NightLantern", "NightTorch");
-        _spotLight = EnsureNamedLight(SpotLightName, null, null);
         pointLight = _fillLight;
+        DisableLegacySpot();
 
-        if (_configured || _fillLight == null || _spotLight == null)
+        if (_configured || _fillLight == null)
             return;
 
         ConfigureLight(_fillLight, LightType.Point);
-        ConfigureLight(_spotLight, LightType.Directional);
         _configured = true;
     }
 
@@ -210,7 +195,6 @@ public sealed class PlayerNightLight : MonoBehaviour
 
         if (existing != null)
         {
-            // Rename legacy single lantern into the fill light when needed.
             if (existing.name != preferredName && preferredName == FillLightName)
                 existing.name = preferredName;
             var light = existing.GetComponent<Light>();
@@ -230,7 +214,7 @@ public sealed class PlayerNightLight : MonoBehaviour
         light.renderMode = LightRenderMode.ForcePixel;
         light.color = lightColor;
         light.intensity = 0f;
-        light.range = type == LightType.Directional ? 0f : 1f;
+        light.range = 1f;
         light.enabled = false;
         ApplyLightCullingMask(light);
     }
@@ -258,20 +242,14 @@ public sealed class PlayerNightLight : MonoBehaviour
 
         if (_fillLight != null)
             ApplyLightCullingMask(_fillLight);
-        if (_spotLight != null)
-            ApplyLightCullingMask(_spotLight);
 
         _layersReady = true;
     }
 
     void ApplyLightCullingMask(Light light)
     {
-        if (_playerVisualLayer < 0)
-            _playerVisualLayer = LayerMask.NameToLayer(PlayerVisualLayerName);
-        if (_playerVisualLayer < 0)
-            return;
-
-        light.cullingMask = ~(1 << _playerVisualLayer);
+        // Gameplay lighting is sun + moon only; the lantern must not fill the world.
+        light.cullingMask = 0;
     }
 
     static void SetLayerRecursive(Transform root, int layer)

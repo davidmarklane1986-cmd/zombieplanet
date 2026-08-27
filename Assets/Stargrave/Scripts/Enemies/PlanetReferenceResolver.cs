@@ -7,9 +7,6 @@ public static class PlanetReferenceResolver
 {
     public static Transform ResolvePlanetTransform()
     {
-        if (PlanetGravity.PlanetTransform != null)
-            return PlanetGravity.PlanetTransform;
-
         GameObject tagged = GameObject.FindGameObjectWithTag("Planet");
         if (tagged != null)
             return tagged.transform;

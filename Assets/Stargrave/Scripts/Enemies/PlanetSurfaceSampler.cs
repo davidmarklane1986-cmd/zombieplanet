@@ -104,7 +104,7 @@ public static class PlanetSurfaceSampler
         }
 
         // 3) Last resort: any dry land on the planet (still never intentionally underwater).
-        for (int i = 0; i < attempts * 2; i++)
+        for (int i = 0; i < attempts * 4; i++)
         {
             Vector3 dir = Random.onUnitSphere;
             if (TryGetDryPoint(dir, planetCenter, planetCollider, planet, groundMask, normalOffset,
@@ -112,7 +112,20 @@ public static class PlanetSurfaceSampler
                 return spawn;
         }
 
-        // Absolute fallback (may be wet if the whole planet is ocean — still better than failing).
+        // Absolute fallback: prefer the preferred pole's analytic surface only if dry; else random dry analytic.
+        if (planet != null && waterLine > 1e-3f)
+        {
+            for (int i = 0; i < 64; i++)
+            {
+                Vector3 dir = i == 0 ? preferredDirection : Random.onUnitSphere;
+                float surfaceR = planet.GetSurfaceRadiusWorld(dir);
+                if (surfaceR < waterLine)
+                    continue;
+                Vector3 up = dir.normalized;
+                return planetCenter + up * (surfaceR + normalOffset);
+            }
+        }
+
         return RaycastPlanetSurface(preferredDirection, planetCollider, planet, planetCenter, normalOffset,
             fallbackShellRadius, groundMask);
     }

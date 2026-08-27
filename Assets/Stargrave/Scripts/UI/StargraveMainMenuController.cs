@@ -17,6 +17,8 @@ public sealed class StargraveMainMenuController : MonoBehaviour
 
     void Awake()
     {
+        if (StargraveLoadOverlay.Instance != null)
+            StargraveLoadOverlay.Instance.HideIfIdle();
         AutoWireButtonsIfMissing();
     }
 

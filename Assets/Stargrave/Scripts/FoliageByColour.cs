@@ -417,7 +417,13 @@ public class FoliageByColour : MonoBehaviour
                         // as the same diffuse-only surface as the ground it sits on (handles both URP
                         // Lit and the glTFast shader the Kenney GLBs import with). Visual-only; does
                         // not affect placement/streaming/culling.
-                        ModelMatteLighting.MakeMatte(instanced);
+                        ModelMatteLighting.MakeMatte(
+                            instanced,
+                            matchTerrainTerminator: true,
+                            ambientFill: ModelMatteLighting.FoliageAmbientFill,
+                            diffuseScale: ModelMatteLighting.FoliageDiffuseScale);
+                        // Re-assert instancing after matte tuning (shader stays glTF / URP Lit).
+                        instanced.enableInstancing = true;
                         if (forceDoubleSided)
                         {
                             if (instanced.HasProperty("_Cull"))
@@ -836,8 +842,10 @@ public class FoliageByColour : MonoBehaviour
     // allocates no native garbage. Everything is disposed in OnDestroy / when the snapshot is rebuilt.
     NativeArray<int> _perm;
     NativeArray<NoiseLayerData> _noiseLayers;
+    NativeArray<BuildingPadBurstData> _pads;
     NativeArray<float3> _dirArray;
     NativeArray<FoliageCandidate> _resArray;
+    FoliageCandidate[] _acceptedScratch; // managed copy of accepted job hits (safe across yields)
     int _jobCapacity;
     JobHandle _pendingHandle;         // last scheduled sampling job (completed before any native disposal)
     bool _burstReady;                 // true when the snapshot is valid AND Burst isn't disabled
@@ -1212,11 +1220,27 @@ public class FoliageByColour : MonoBehaviour
         if (_scaleFactor < 1e-6f)
             _scaleFactor = 1f;
 
+        // Mirror PlanetBuildingPads into Burst so jobbed elevation matches mesh + managed analytic.
+        BuildingPadSample[] padSamples = PlanetBuildingPads.Samples;
+        _pads = new NativeArray<BuildingPadBurstData>(padSamples.Length, Allocator.Persistent);
+        for (int i = 0; i < padSamples.Length; i++)
+        {
+            BuildingPadSample s = padSamples[i];
+            _pads[i] = new BuildingPadBurstData
+            {
+                axis = s.Axis,
+                rPad = s.RPad,
+                cosInner = s.CosInner,
+                cosOuter = s.CosOuter
+            };
+        }
+
         _burstReady = true;
 
         if (logResults)
             Debug.Log($"[FoliageByColour] Burst sampler ready: {_noiseLayers.Length} noise layer(s), " +
-                      $"planetRadius {_planetRadiusLocal:F1}, scale {_scaleFactor:F2}, elev [{_elevMinLocal:F1}..{_elevMaxLocal:F1}].");
+                      $"pads {_pads.Length}, planetRadius {_planetRadiusLocal:F1}, scale {_scaleFactor:F2}, " +
+                      $"elev [{_elevMinLocal:F1}..{_elevMaxLocal:F1}].");
     }
 
     // Ensures the reused candidate buffers can hold 'count' entries (grows by realloc; never shrinks).
@@ -1224,6 +1248,9 @@ public class FoliageByColour : MonoBehaviour
     {
         if (_dirArray.IsCreated && _resArray.IsCreated && _jobCapacity >= count)
             return;
+        // Never dispose while a sampling job (or a coroutine still reading results) owns the buffers.
+        _pendingHandle.Complete();
+        _pendingHandle = default;
         if (_dirArray.IsCreated) _dirArray.Dispose();
         if (_resArray.IsCreated) _resArray.Dispose();
         // Grow with headroom so a slightly denser neighbour doesn't realloc every cell.
@@ -1240,11 +1267,14 @@ public class FoliageByColour : MonoBehaviour
     void DisposeNative()
     {
         // Make sure no sampling job is still reading the buffers before we free them (e.g. a coroutine
-        // killed between Schedule and Complete on disable). Completing a default/finished handle is a no-op.
+        // suspended between Schedule and Complete). Completing a default/finished handle is a no-op.
+        // ScatterCellJobbed snapshots accepted hits to managed memory before yielding, so freeing
+        // _resArray here cannot throw ObjectDisposedException in the consumer loop.
         _pendingHandle.Complete();
         _pendingHandle = default;
         if (_perm.IsCreated) _perm.Dispose();
         if (_noiseLayers.IsCreated) _noiseLayers.Dispose();
+        if (_pads.IsCreated) _pads.Dispose();
         if (_dirArray.IsCreated) _dirArray.Dispose();
         if (_resArray.IsCreated) _resArray.Dispose();
         _jobCapacity = 0;
@@ -1460,6 +1490,9 @@ public class FoliageByColour : MonoBehaviour
     PlaceResult TryPlace(RuleRuntime rt, Vector3 pos, Vector3 hitNormal, Vector3 radial,
                          HashSet<Vector3Int> occupied, float keepProb)
     {
+        if (PlanetBuildingPads.ShouldSuppressFoliage(radial))
+            return PlaceResult.Skipped;
+
         if (keepProb < 1f && Random.value > keepProb)
         {
             rt.rejDensity++;
@@ -2671,6 +2704,7 @@ public class FoliageByColour : MonoBehaviour
             directions = _dirArray,
             layers = _noiseLayers,
             perm = _perm,
+            pads = _pads,
             planetRadius = _planetRadiusLocal,
             scaleFactor = _scaleFactor,
             center = centerF,
@@ -2693,6 +2727,23 @@ public class FoliageByColour : MonoBehaviour
         handle.Complete();
         _pendingHandle = default;
 
+        // Snapshot accepted hits into managed memory BEFORE any yield. DisposeNative / EnsureJobCapacity
+        // (pad rebuild, teardown) can free _resArray while this coroutine is suspended.
+        if (!_resArray.IsCreated)
+        {
+            _loadedCells.Add(cell);
+            yield break;
+        }
+        if (_acceptedScratch == null || _acceptedScratch.Length < count)
+            _acceptedScratch = new FoliageCandidate[Mathf.Max(count, 1024)];
+        int acceptedCount = 0;
+        for (int k = 0; k < count; k++)
+        {
+            FoliageCandidate c = _resArray[k];
+            if (c.accepted != 0)
+                _acceptedScratch[acceptedCount++] = c;
+        }
+
         // Per-frame cap on CONSUMED accepted candidates (the managed classification + placement). Near
         // cells consume faster so the immediate vicinity fills quickly; distant cells drain at the steady
         // rate. The ocean rejects produced nothing here, so they cost the main thread nothing.
@@ -2702,11 +2753,9 @@ public class FoliageByColour : MonoBehaviour
         int consumed = 0;
         _streamInstCount = 0;
 
-        for (int k = 0; k < count && !CellFull(cellPlaced, cellTarget); k++)
+        for (int k = 0; k < acceptedCount && !CellFull(cellPlaced, cellTarget); k++)
         {
-            FoliageCandidate cand = _resArray[k];
-            if (cand.accepted == 0)
-                continue;
+            FoliageCandidate cand = _acceptedScratch[k];
 
             Vector3 pos = cand.pos;
             Vector3 hitNormal = cand.normal;
@@ -2917,6 +2966,88 @@ public class FoliageByColour : MonoBehaviour
     {
         b.Expand(2f * margin);
         return b;
+    }
+
+    /// <summary>
+    /// Call after building pads reshape the planet: refresh Burst elevation snapshot and clear foliage
+    /// that now sits on pad plazas so streaming can refill around (not on) the pad.
+    /// </summary>
+    public void NotifyBuildingPadsChanged()
+    {
+        if (_planet == null)
+            _planet = Object.FindFirstObjectByType<Planet>();
+
+        BuildBurstSnapshot();
+        ClearFoliageOnBuildingPads();
+    }
+
+    /// <summary>
+    /// Destroys pooled instances on suppressing pads and unloads streaming cells whose center falls on a
+    /// pad so they restream without plaza foliage.
+    /// </summary>
+    void ClearFoliageOnBuildingPads()
+    {
+        if (PlanetBuildingPads.Count == 0 || _planet == null)
+            return;
+
+        Vector3 center = _planet.transform.position;
+
+        // Unload streamed cells that sit on pads (GPU + pooled), so restream respects pad suppression.
+        _unloadScratch.Clear();
+        foreach (var cell in _loadedCells)
+        {
+            Vector3 cc = CellCenter(cell);
+            Vector3 radial = cc - center;
+            if (radial.sqrMagnitude < 1e-8f)
+                continue;
+            if (PlanetBuildingPads.ShouldSuppressFoliage(radial.normalized))
+                _unloadScratch.Add(cell);
+        }
+        for (int i = 0; i < _unloadScratch.Count; i++)
+            UnloadCell(_unloadScratch[i]);
+
+        // Safety pass: destroy any pooled leftovers still sitting on a pad (e.g. non-streamed / edge).
+        for (int r = 0; r < _runtimes.Count; r++)
+        {
+            RuleRuntime rt = _runtimes[r];
+            if (rt.objChunkMap == null)
+                continue;
+
+            _unloadScratch.Clear();
+            foreach (var kv in rt.objChunkMap)
+            {
+                ObjChunk oc = kv.Value;
+                var objs = oc.objects;
+                for (int o = objs.Count - 1; o >= 0; o--)
+                {
+                    GameObject go = objs[o];
+                    if (go == null)
+                    {
+                        objs.RemoveAt(o);
+                        continue;
+                    }
+                    Vector3 radial = go.transform.position - center;
+                    if (radial.sqrMagnitude < 1e-8f)
+                        continue;
+                    if (!PlanetBuildingPads.ShouldSuppressFoliage(radial.normalized))
+                        continue;
+                    Object.Destroy(go);
+                    objs.RemoveAt(o);
+                    rt.placed = Mathf.Max(0, rt.placed - 1);
+                }
+                if (objs.Count == 0)
+                    _unloadScratch.Add(kv.Key);
+            }
+            for (int i = 0; i < _unloadScratch.Count; i++)
+            {
+                Vector3Int key = _unloadScratch[i];
+                if (rt.objChunkMap.TryGetValue(key, out var empty) && empty.objects.Count == 0)
+                {
+                    rt.objChunkMap.Remove(key);
+                    rt.objChunks?.Remove(empty);
+                }
+            }
+        }
     }
 
     void OnDisable()

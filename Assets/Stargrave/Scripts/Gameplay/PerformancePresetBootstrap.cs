@@ -46,23 +46,25 @@ public static class PerformancePresetBootstrap
     static void ApplyZombiePreset(GraphicsProfile profile)
     {
         ZombieAI[] all = Object.FindObjectsByType<ZombieAI>(FindObjectsInactive.Include);
-        bool quality = profile == GraphicsProfile.Quality;
-        bool balanced = profile == GraphicsProfile.Balanced;
-
         for (int i = 0; i < all.Length; i++)
-        {
-            ZombieAI z = all[i];
-            if (z == null)
-                continue;
+            ApplyZombiePreset(all[i], profile);
+    }
 
-            z.aiDecisionPeriod = quality ? 2 : (balanced ? 2 : 3);
-            z.farDecisionPeriodMultiplier = quality ? 2f : (balanced ? 2.3f : 2.7f);
-            z.cheapDecisionPeriodMultiplier = quality ? 2.5f : (balanced ? 3f : 3.7f);
-            z.maxFullAiEnemiesNearPlayer = quality ? 120 : (balanced ? 90 : 70);
-            z.fullAiNearDistance = quality ? 36f : (balanced ? 32f : 28f);
-            z.surfaceStickRaycastPeriod = quality ? 2 : (balanced ? 2 : 3);
-            z.cheapIdleSpeedMultiplier = quality ? 0.45f : (balanced ? 0.4f : 0.34f);
-        }
+    public static void ApplyZombiePreset(ZombieAI z, GraphicsProfile? profile = null)
+    {
+        if (z == null)
+            return;
+        GraphicsProfile p = profile ?? GetCurrentProfile();
+        bool quality = p == GraphicsProfile.Quality;
+        bool balanced = p == GraphicsProfile.Balanced;
+
+        z.aiDecisionPeriod = quality ? 2 : (balanced ? 2 : 3);
+        z.farDecisionPeriodMultiplier = quality ? 2f : (balanced ? 2.3f : 2.7f);
+        z.cheapDecisionPeriodMultiplier = quality ? 2.5f : (balanced ? 3f : 3.7f);
+        z.maxFullAiEnemiesNearPlayer = quality ? 28 : (balanced ? 22 : 16);
+        z.fullAiNearDistance = quality ? 36f : (balanced ? 32f : 28f);
+        z.surfaceStickRaycastPeriod = quality ? 2 : (balanced ? 2 : 3);
+        z.cheapIdleSpeedMultiplier = quality ? 0.45f : (balanced ? 0.4f : 0.34f);
     }
 
     static void ApplyGlobalQualityPreset(GraphicsProfile profile)
