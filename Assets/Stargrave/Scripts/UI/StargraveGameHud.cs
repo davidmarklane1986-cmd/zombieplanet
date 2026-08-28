@@ -368,7 +368,7 @@ public sealed class StargraveGameHud : MonoBehaviour
         rows.childForceExpandHeight = false;
 
         _healthText = CreateStatRow(card, "HealthRow", "HEALTH", "100", StargraveHudStyle.Health, font);
-        _staminaText = CreateStatRow(card, "StaminaRow", "STAM", "100", StargraveHudStyle.Swim, font);
+        _staminaText = CreateStatRow(card, "StaminaRow", "STAMINA", "100", StargraveHudStyle.Swim, font);
         _killsText = CreateStatRow(card, "KillsRow", "KILLS", "0", StargraveHudStyle.Kills, font);
         return card;
     }
