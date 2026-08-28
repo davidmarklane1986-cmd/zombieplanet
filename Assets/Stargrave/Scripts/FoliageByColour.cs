@@ -1530,6 +1530,7 @@ public class FoliageByColour : MonoBehaviour
             {
                 var go = Object.Instantiate(prefab, placePos, rot, rt.poolContainer);
                 go.transform.localScale = prefab.transform.localScale * scale;
+                Stargrave.CameraOcclusion.FoliageOccluder.EnsureOn(go);
                 AddPooledToChunk(rt, go, placePos);
                 BeginPooledPhaseIn(go.transform);
                 rt.placed++;
@@ -1789,6 +1790,7 @@ public class FoliageByColour : MonoBehaviour
                 {
                     var go = Object.Instantiate(prefab, placePos, rot, best.poolContainer);
                     go.transform.localScale = prefab.transform.localScale * scale;
+                    Stargrave.CameraOcclusion.FoliageOccluder.EnsureOn(go);
                     AddPooledToChunk(best, go, placePos);
                     BeginPooledPhaseIn(go.transform);
                     if (++instThisFrame >= maxInstantiatesPerFrame)
@@ -1927,6 +1929,7 @@ public class FoliageByColour : MonoBehaviour
             if (age >= dur)
             {
                 p.t.localScale = p.finalScale; // land EXACTLY on the authored scale (no drift vs the size system)
+                Stargrave.CameraOcclusion.FoliageOccluder.EnsureOn(p.t.gameObject);
                 _pooledPhasing[i] = _pooledPhasing[_pooledPhasing.Count - 1];
                 _pooledPhasing.RemoveAt(_pooledPhasing.Count - 1);
                 continue;
@@ -2593,6 +2596,7 @@ public class FoliageByColour : MonoBehaviour
                 {
                     var go = Object.Instantiate(prefab, placePos, rot, best.poolContainer);
                     go.transform.localScale = prefab.transform.localScale * scale;
+                    Stargrave.CameraOcclusion.FoliageOccluder.EnsureOn(go);
                     AddPooledToChunk(best, go, placePos);
                     BeginPooledPhaseIn(go.transform);
                     if (++_streamInstCount >= maxInstantiatesPerFrame)
@@ -2859,6 +2863,7 @@ public class FoliageByColour : MonoBehaviour
                 {
                     var go = Object.Instantiate(prefab, placePos, rot, best.poolContainer);
                     go.transform.localScale = prefab.transform.localScale * scale;
+                    Stargrave.CameraOcclusion.FoliageOccluder.EnsureOn(go);
                     AddPooledToChunk(best, go, placePos);
                     BeginPooledPhaseIn(go.transform);
                     if (++_streamInstCount >= maxInstantiatesPerFrame)

@@ -1,6 +1,7 @@
 using UnityEngine;
 using UnityEngine.InputSystem;
 using Unity.Cinemachine;
+using Stargrave.CameraOcclusion;
 
 /// <summary>
 /// Runs <b>before</b> <see cref="PlayerLookController"/> (script order) to set <see cref="IsAimingDownSights"/> and smooth ADS FOV
@@ -106,6 +107,20 @@ public class MouseLook_Gravity : MonoBehaviour
         ApplySteadyCameraPresetIfNeeded();
         CaptureHipFieldOfView();
         CaptureCombatStackBaseline();
+        EnsurePlayerScreenCircle();
+    }
+
+    void EnsurePlayerScreenCircle()
+    {
+        ResolveCameraIfNeeded();
+        if (_resolvedCamera == null)
+            return;
+
+        var overlay = _resolvedCamera.GetComponent<PlayerScreenCircleOverlay>();
+        if (overlay == null)
+            overlay = _resolvedCamera.gameObject.AddComponent<PlayerScreenCircleOverlay>();
+
+        overlay.Configure(transform, cameraTarget);
     }
 
     void CaptureCombatStackBaseline()
