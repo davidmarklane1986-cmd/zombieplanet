@@ -1,7 +1,9 @@
 #ifndef STARGRAVE_SCREEN_CIRCLE_OCCLUSION_INCLUDED
 #define STARGRAVE_SCREEN_CIRCLE_OCCLUSION_INCLUDED
 
-#include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/Core.hlsl"
+// Do not include URP Core/Input here. Shader Graph injects this file into every
+// pass (including ShadowCaster); a second Input.hlsl include redefines InputData
+// and fails player builds.
 
 float4 _StargraveOccPlayerCenter;
 float4 _StargraveOccScreenCenter;
@@ -66,6 +68,9 @@ void StargraveScreenCircleAlpha_float(
     float4 PositionCS,
     out float Result)
 {
+#ifdef SHADERGRAPH_PREVIEW
+    Result = Alpha;
+#else
     float circleCoverage = StargraveScreenCircleOcclusionCoverage(PositionWS, PositionCS);
 
     // glTF foliage uses alpha as a cutout mask. Discard the original
@@ -83,6 +88,7 @@ void StargraveScreenCircleAlpha_float(
     }
 
     Result = 1.0f;
+#endif
 }
 
 #endif

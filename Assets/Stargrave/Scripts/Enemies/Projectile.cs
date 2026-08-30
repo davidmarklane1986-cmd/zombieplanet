@@ -211,7 +211,7 @@ public class Projectile : MonoBehaviour
         if (ShouldIgnoreCollider(other))
             return;
 
-        Vector3 hitPoint = other.ClosestPoint(transform.position);
+        Vector3 hitPoint = ClosestPointOnCollider(other, transform.position);
         Vector3 hitNormal = HitNormalFromImpact(transform.position, hitPoint);
 
         if (TryDamageZombie(other, hitPoint, hitNormal))
@@ -223,6 +223,15 @@ public class Projectile : MonoBehaviour
                 PlayImpact(hitPoint, hitNormal);
             Destroy(gameObject);
         }
+    }
+
+    static Vector3 ClosestPointOnCollider(Collider other, Vector3 from)
+    {
+        if (other is BoxCollider || other is SphereCollider || other is CapsuleCollider)
+            return other.ClosestPoint(from);
+        if (other is MeshCollider mesh && mesh.convex)
+            return other.ClosestPoint(from);
+        return other.bounds.ClosestPoint(from);
     }
 
     /// <summary>Outward-ish direction from the contact surface toward the projectile (good for impact burst orientation).</summary>
@@ -266,6 +275,7 @@ public class Projectile : MonoBehaviour
             go.transform.rotation = Quaternion.LookRotation(outwardNormal);
 
         var ps = go.AddComponent<ParticleSystem>();
+        ps.Stop(true, ParticleSystemStopBehavior.StopEmittingAndClear);
         var main = ps.main;
         main.playOnAwake = false;
         main.loop = false;

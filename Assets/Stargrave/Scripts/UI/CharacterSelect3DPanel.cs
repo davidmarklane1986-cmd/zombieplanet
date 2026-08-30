@@ -118,6 +118,8 @@ public sealed class CharacterSelect3DPanel : MonoBehaviour
         _carouselRoot.localRotation = Quaternion.Euler(0f, _currentYaw, 0f);
         CommitSelection(_slots[_selectedIndex].id, invoke: false);
         RefreshLabels();
+        _cam.enabled = true;
+        RenderPreviewNow();
     }
 
     public void SetActivePreviews(bool active)
@@ -125,10 +127,16 @@ public sealed class CharacterSelect3DPanel : MonoBehaviour
         enabled = active;
         if (_previewWorldRoot != null)
             _previewWorldRoot.gameObject.SetActive(active);
+        if (_cam != null)
+            _cam.enabled = active;
         if (!active)
         {
             _dragging = false;
             _holdDir = 0;
+        }
+        else
+        {
+            RenderPreviewNow();
         }
     }
 
@@ -339,7 +347,7 @@ public sealed class CharacterSelect3DPanel : MonoBehaviour
         _cam.fieldOfView = CamFov;
         _cam.nearClipPlane = 0.08f;
         _cam.farClipPlane = 18f;
-        _cam.cullingMask = _previewLayerMask;
+        _cam.cullingMask = -1;
         _cam.depth = -100;
         _cam.enabled = false;
         _cam.allowHDR = false;
@@ -438,6 +446,15 @@ public sealed class CharacterSelect3DPanel : MonoBehaviour
             _cam.targetTexture = _rt;
             _cam.aspect = (float)_rt.width / (float)Mathf.Max(1, _rt.height);
         }
+    }
+
+    void RenderPreviewNow()
+    {
+        if (_cam == null || _rt == null || _previewWorldRoot == null
+            || !_previewWorldRoot.gameObject.activeInHierarchy)
+            return;
+        SyncRenderTargetToView();
+        _cam.Render();
     }
 
     GameObject SpawnModel(PlayableCharacterDef def, Transform parent)

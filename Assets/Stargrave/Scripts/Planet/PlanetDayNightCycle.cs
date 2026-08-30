@@ -15,6 +15,7 @@ using UnityEditor;
 public class PlanetDayNightCycle : MonoBehaviour
 {
     const string MoonLightName = "MoonLight";
+    const string SkyFillLightName = "SkyFillLight";
 
     [Header("Cycle timing")]
     [Tooltip("Seconds for a full 360° sun orbit (one day).")]
@@ -159,10 +160,19 @@ public class PlanetDayNightCycle : MonoBehaviour
 
     [Range(0f, 1f)] public float goldenAmbientBlend = 0.45f;
 
+    [Header("Daytime shade fill")]
+    [Tooltip("Unshadowed bounce from the anti-sun side. Lifts tree/prop backs in daylight without changing material colours.")]
+    [Range(0f, 1.5f)] public float dayShadeFillIntensity = 0.55f;
+
+    [Tooltip("Near-white so Kenney albedo stays green; saturated sky blue would retint the shade side.")]
+    [ColorUsage(false, false)]
+    public Color dayShadeFillColor = new Color(0.92f, 0.95f, 1f, 1f);
+
     [Header("Editor")]
     public bool playInEditMode = false;
 
     Light _moonLight;
+    Light _skyFillLight;
     bool _warnedNoLight;
     Vector3 _planetNorth = Vector3.up;
     Vector3 _equatorDir = Vector3.right;
@@ -511,6 +521,7 @@ public class PlanetDayNightCycle : MonoBehaviour
         }
 
         UpdateMoonlight(towardMoon, up, moonAmount);
+        UpdateDayShadeFill(sun, up);
     }
 
     /// <summary>
@@ -728,6 +739,64 @@ public class PlanetDayNightCycle : MonoBehaviour
         _moonLight.shadowStrength = moonShadowStrength;
         _moonLight.cullingMask = ~(1 << 5);
         _moonLight.renderMode = LightRenderMode.Auto;
+    }
+
+    void UpdateDayShadeFill(Light sun, Vector3 up)
+    {
+        EnsureSkyFillLight();
+        if (_skyFillLight == null)
+            return;
+
+        float intensity = dayShadeFillIntensity * Mathf.Clamp01(SkyDayAmount);
+        if (sun == null || intensity <= 0.001f)
+        {
+            _skyFillLight.intensity = 0f;
+            _skyFillLight.shadows = LightShadows.None;
+            _skyFillLight.enabled = true;
+            return;
+        }
+
+        Vector3 fillForward = -sun.transform.forward;
+        if (fillForward.sqrMagnitude < 1e-8f)
+            fillForward = Vector3.forward;
+        fillForward.Normalize();
+        Vector3 hint = up.sqrMagnitude > 1e-8f ? up : Vector3.up;
+        if (Mathf.Abs(Vector3.Dot(fillForward, hint)) > 0.98f)
+            hint = Vector3.Cross(fillForward, Vector3.right);
+        if (hint.sqrMagnitude < 1e-6f)
+            hint = Vector3.forward;
+        _skyFillLight.transform.rotation = Quaternion.LookRotation(fillForward, hint.normalized);
+        _skyFillLight.color = dayShadeFillColor;
+        _skyFillLight.intensity = intensity;
+        _skyFillLight.shadows = LightShadows.None;
+        _skyFillLight.enabled = true;
+        _skyFillLight.gameObject.SetActive(true);
+    }
+
+    void EnsureSkyFillLight()
+    {
+        if (_skyFillLight != null)
+            return;
+
+        Transform existing = transform.Find(SkyFillLightName);
+        GameObject go = existing != null ? existing.gameObject : null;
+        if (go == null)
+        {
+            go = new GameObject(SkyFillLightName);
+            go.transform.SetParent(transform, false);
+        }
+
+        go.SetActive(true);
+        _skyFillLight = go.GetComponent<Light>();
+        if (_skyFillLight == null)
+            _skyFillLight = go.AddComponent<Light>();
+
+        _skyFillLight.type = LightType.Directional;
+        _skyFillLight.color = dayShadeFillColor;
+        _skyFillLight.intensity = 0f;
+        _skyFillLight.shadows = LightShadows.None;
+        _skyFillLight.cullingMask = ~(1 << 5);
+        _skyFillLight.renderMode = LightRenderMode.Auto;
     }
 
     Vector3 ResolveLocalUp()

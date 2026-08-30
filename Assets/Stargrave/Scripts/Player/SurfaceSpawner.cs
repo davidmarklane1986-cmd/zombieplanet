@@ -23,17 +23,73 @@ public class SurfaceSpawner : MonoBehaviour
     public int maxElevatedAttempts = 80;
     [Tooltip("Fallback shell radius when planet mesh / analytic surface is unavailable.")]
     public float fallbackShellRadius = 120f;
+    [Tooltip("Temporary clearance used before terrain generation completes. Prevents the initial camera from spawning inside a tall terrain peak.")]
+    [Min(0f)] public float preGenerationClearance = 32f;
 
     Rigidbody _rb;
+    bool _surfacePositionVerified;
 
     void Awake()
     {
         _rb = GetComponent<Rigidbody>();
+        EnsureOutsidePlanetInterior();
+    }
+
+    void EnsureOutsidePlanetInterior()
+    {
+        if (!ResolvePlanet())
+            return;
+
+        Planet planetComp = planet.GetComponent<Planet>();
+        if (planetComp == null)
+            return;
+
+        float distanceFromCenter = Vector3.Distance(transform.position, planet.position);
+        float baseRadius = planetComp.GetBaseRadiusWorld();
+        if (distanceFromCenter > 1f && distanceFromCenter >= baseRadius + preGenerationClearance)
+            return;
+
+        Vector3 direction = Vector3.up;
+        // Awake can run before SebLague's elevation range is populated. Use the
+        // base radius immediately, then refine to terrain once generation is ready.
+        float surfaceRadius = baseRadius + preGenerationClearance;
+        if (planetComp.IsGenerated)
+            surfaceRadius = Mathf.Max(surfaceRadius,
+                planetComp.GetSurfaceRadiusWorld(direction));
+        if (surfaceRadius <= 0.1f)
+            surfaceRadius = fallbackShellRadius;
+        float safeRadius = Mathf.Max(
+            surfaceRadius + heightAboveSurface,
+            baseRadius + heightAboveSurface + spawnDryClearance + preGenerationClearance);
+        ApplyPose(planet.position + direction * safeRadius,
+            Quaternion.FromToRotation(Vector3.up, direction));
     }
 
     void Start()
     {
         StartCoroutine(SpawnWhenReady());
+    }
+
+    void Update()
+    {
+        if (_surfacePositionVerified || planet == null)
+            return;
+
+        Planet planetComp = planet.GetComponent<Planet>();
+        if (planetComp == null || !planetComp.IsGenerated)
+            return;
+
+        if (IsValidSurfaceSpawn(transform.position, planetComp))
+        {
+            _surfacePositionVerified = true;
+            return;
+        }
+
+        if (TryGetAnalyticFallback(out Vector3 spawnPos, out Quaternion spawnRot))
+        {
+            ApplyPose(spawnPos, spawnRot);
+            _surfacePositionVerified = true;
+        }
     }
 
     IEnumerator SpawnWhenReady()
@@ -50,10 +106,21 @@ public class SurfaceSpawner : MonoBehaviour
         yield return null;
         yield return new WaitForSeconds(0.2f);
 
-        if (!TryPickRandomSurface(out Vector3 spawnPos, out Quaternion spawnRot))
-            yield break;
+        bool foundSpawn = TryPickRandomSurface(out Vector3 spawnPos, out Quaternion spawnRot);
+        if (foundSpawn && planetComp != null && !IsValidSurfaceSpawn(spawnPos, planetComp))
+            foundSpawn = false;
+
+        if (!foundSpawn)
+        {
+            if (!TryGetAnalyticFallback(out spawnPos, out spawnRot))
+            {
+                Debug.LogWarning("SurfaceSpawner: Could not find a valid planet surface spawn.", this);
+                yield break;
+            }
+        }
 
         ApplyPose(spawnPos, spawnRot);
+        _surfacePositionVerified = true;
         yield return new WaitForFixedUpdate();
         ApplyPose(spawnPos, spawnRot);
     }
@@ -66,7 +133,8 @@ public class SurfaceSpawner : MonoBehaviour
     {
         if (!ResolvePlanet())
             return false;
-        if (!TryPickRandomSurface(out Vector3 spawnPos, out Quaternion spawnRot))
+        if (!TryPickRandomSurface(out Vector3 spawnPos, out Quaternion spawnRot)
+            && !TryGetAnalyticFallback(out spawnPos, out spawnRot))
             return false;
         ApplyPose(spawnPos, spawnRot);
         if (TryGetComponent(out PlayerHealth health))
@@ -165,6 +233,57 @@ public class SurfaceSpawner : MonoBehaviour
         return true;
     }
 
+    bool TryGetAnalyticFallback(out Vector3 spawnPos, out Quaternion spawnRot)
+    {
+        spawnPos = transform.position;
+        spawnRot = transform.rotation;
+
+        Planet planetComp = planet != null ? planet.GetComponent<Planet>() : null;
+        if (planetComp == null)
+            return false;
+
+        Vector3 preferredDirection = (transform.position - planet.position).normalized;
+        if (preferredDirection.sqrMagnitude < 1e-6f)
+            preferredDirection = Vector3.up;
+
+        float minimumDryRadius = planetComp.GetBaseRadiusWorld() + spawnDryClearance;
+        Vector3 bestDirection = preferredDirection;
+        float bestSurfaceRadius = 0f;
+        for (int i = 0; i < 128; i++)
+        {
+            Vector3 direction = i == 0 ? preferredDirection : Random.onUnitSphere;
+            float surfaceRadius = planetComp.GetSurfaceRadiusWorld(direction);
+            if (surfaceRadius > bestSurfaceRadius)
+            {
+                bestSurfaceRadius = surfaceRadius;
+                bestDirection = direction;
+            }
+            if (surfaceRadius >= minimumDryRadius)
+            {
+                bestSurfaceRadius = surfaceRadius;
+                bestDirection = direction;
+                break;
+            }
+        }
+
+        if (bestSurfaceRadius <= 0.1f)
+            return false;
+
+        Vector3 surfaceUp = bestDirection.normalized;
+        spawnPos = planet.position + bestDirection * (bestSurfaceRadius + heightAboveSurface);
+        spawnRot = Quaternion.FromToRotation(Vector3.up, surfaceUp);
+        return true;
+    }
+
+    bool IsValidSurfaceSpawn(Vector3 spawnPosition, Planet planetComp)
+    {
+        Vector3 direction = (spawnPosition - planet.position).normalized;
+        if (direction.sqrMagnitude < 1e-6f)
+            return false;
+        float surfaceRadius = planetComp.GetSurfaceRadiusWorld(direction);
+        return Vector3.Distance(spawnPosition, planet.position) >= surfaceRadius + heightAboveSurface - 0.5f;
+    }
+
     static float ResolveWaterLine(Planet planetComp, PlanetOceanLayer ocean, float dryClearance)
     {
         float clearance = Mathf.Max(0f, dryClearance);
@@ -181,8 +300,11 @@ public class SurfaceSpawner : MonoBehaviour
             _rb = GetComponent<Rigidbody>();
         if (_rb != null)
         {
-            _rb.linearVelocity = Vector3.zero;
-            _rb.angularVelocity = Vector3.zero;
+            if (!_rb.isKinematic)
+            {
+                _rb.linearVelocity = Vector3.zero;
+                _rb.angularVelocity = Vector3.zero;
+            }
             _rb.position = spawnPos;
             _rb.rotation = spawnRot;
         }

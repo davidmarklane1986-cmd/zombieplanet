@@ -341,7 +341,7 @@ public class PlanetAtmosphereLayer : MonoBehaviour
         }
 
         if (mr.sharedMaterial != null)
-            mr.sharedMaterial.renderQueue = 3200;
+            mr.sharedMaterial.renderQueue = 2950;
 
         bool _;
         PushSunAndPlanetToMaterial(out _);

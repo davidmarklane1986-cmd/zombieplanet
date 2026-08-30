@@ -5,6 +5,7 @@ using UnityEngine.EventSystems;
 using UnityEngine.InputSystem;
 using UnityEngine.UI;
 using UnityEngine.InputSystem.UI;
+using TMPro;
 #if UNITY_EDITOR
 using UnityEditor;
 #endif
@@ -148,6 +149,7 @@ public sealed class StargraveFrontendBootstrap : MonoBehaviour
     void Awake()
     {
         BuildRuntimeUi();
+        DisableStaleSceneTextRaycasts();
         EnsureEventSystem();
         _uiInputModule = FindFirstObjectByType<InputSystemUIInputModule>();
         ResolveRuntimeRefs();
@@ -228,6 +230,21 @@ public sealed class StargraveFrontendBootstrap : MonoBehaviour
             if (!point.enabled)
                 point.Enable();
             _manualPointerHoverGo = null;
+        }
+    }
+
+    static void DisableStaleSceneTextRaycasts()
+    {
+        // SampleScene's prompt Canvas has TextMeshProUGUI on the Canvas root (plus a missing PromptUI).
+        // That graphic stays in UGUI's raycast list and blows up GraphicRaycaster when destroyed.
+        var tmps = FindObjectsByType<TextMeshProUGUI>(FindObjectsInactive.Include);
+        for (int i = 0; i < tmps.Length; i++)
+        {
+            TextMeshProUGUI tmp = tmps[i];
+            if (tmp == null)
+                continue;
+            if (tmp.GetComponent<Canvas>() != null)
+                tmp.raycastTarget = false;
         }
     }
 
@@ -326,9 +343,18 @@ public sealed class StargraveFrontendBootstrap : MonoBehaviour
         };
 
         var hits = new List<RaycastResult>(16);
-        _graphicRaycaster.Raycast(pointerData, hits);
-        if (hits.Count == 0)
-            eventSystem.RaycastAll(pointerData, hits);
+        try
+        {
+            _graphicRaycaster.Raycast(pointerData, hits);
+            // Scene canvases (PromptUI + TMP) can hold destroyed graphics for a frame.
+            // RaycastAll walks every GraphicRaycaster and UGUI does not skip those.
+            if (hits.Count == 0)
+                eventSystem.RaycastAll(pointerData, hits);
+        }
+        catch (MissingReferenceException)
+        {
+            return;
+        }
 
         GameObject topHit = null;
         int bestHoverPriority = -1;
@@ -565,15 +591,15 @@ public sealed class StargraveFrontendBootstrap : MonoBehaviour
         point.expectedControlType = "Vector2";
         point.AddBinding("<Mouse>/position");
 
-        var click = map.AddAction("Click", InputActionType.Button);
+        var click = map.AddAction("Click", InputActionType.PassThrough);
         click.expectedControlType = "Button";
         click.AddBinding("<Mouse>/leftButton");
 
-        var rightClick = map.AddAction("RightClick", InputActionType.Button);
+        var rightClick = map.AddAction("RightClick", InputActionType.PassThrough);
         rightClick.expectedControlType = "Button";
         rightClick.AddBinding("<Mouse>/rightButton");
 
-        var middleClick = map.AddAction("MiddleClick", InputActionType.Button);
+        var middleClick = map.AddAction("MiddleClick", InputActionType.PassThrough);
         middleClick.expectedControlType = "Button";
         middleClick.AddBinding("<Mouse>/middleButton");
 
@@ -794,12 +820,40 @@ public sealed class StargraveFrontendBootstrap : MonoBehaviour
         text.verticalOverflow = VerticalWrapMode.Overflow;
     }
 
+    static Sprite _uiCircleSprite;
+
     static Sprite UiCircleSprite()
     {
-        Sprite sprite = Resources.GetBuiltinResource<Sprite>("UI/Skin/Knob.psd");
-        if (sprite != null)
-            return sprite;
-        return Resources.GetBuiltinResource<Sprite>("UI/Skin/UISprite.psd");
+        if (_uiCircleSprite != null)
+            return _uiCircleSprite;
+
+        const int size = 64;
+        var tex = new Texture2D(size, size, TextureFormat.RGBA32, false)
+        {
+            name = "StargraveUiCircleTex",
+            wrapMode = TextureWrapMode.Clamp,
+            filterMode = FilterMode.Bilinear,
+            hideFlags = HideFlags.HideAndDontSave
+        };
+
+        float cx = (size - 1) * 0.5f;
+        float r = cx - 0.5f;
+        for (int y = 0; y < size; y++)
+        {
+            for (int x = 0; x < size; x++)
+            {
+                float dx = x - cx;
+                float dy = y - cx;
+                float a = Mathf.Clamp01(r - Mathf.Sqrt(dx * dx + dy * dy) + 0.5f);
+                tex.SetPixel(x, y, new Color(1f, 1f, 1f, a));
+            }
+        }
+
+        tex.Apply(false, true);
+        _uiCircleSprite = Sprite.Create(tex, new Rect(0f, 0f, size, size), new Vector2(0.5f, 0.5f), 100f, 0, SpriteMeshType.FullRect);
+        _uiCircleSprite.name = "StargraveUiCircle";
+        _uiCircleSprite.hideFlags = HideFlags.HideAndDontSave;
+        return _uiCircleSprite;
     }
 
     static void SetLoadingCardPose(RectTransform rt, CanvasGroup group, Vector2 pos, float scale, float rotZ, float alpha)

@@ -51,6 +51,8 @@ namespace Stargrave.CameraOcclusion
 
             if (occlusionShader == null)
                 occlusionShader = Shader.Find("Shader Graphs/StargraveFoliageGltfOcclusion");
+            if (occlusionShader == null)
+                occlusionShader = Shader.Find("Stargrave/Foliage Occlusion Lit");
             if (occlusionShader == null && !_loggedShaderMissing)
             {
                 _loggedShaderMissing = true;
