@@ -28,6 +28,10 @@ using Random = UnityEngine.Random;
 /// </summary>
 public class FoliageByColour : MonoBehaviour
 {
+    /// <summary>Raised whenever a pooled foliage visual is instantiated at runtime.</summary>
+    [System.NonSerialized]
+    public System.Action<GameObject, string> PooledInstanceCreated;
+
     /// <summary>How a candidate surface point is assigned to a placement rule.</summary>
     public enum FoliagePlacementMode
     {
@@ -791,6 +795,13 @@ public class FoliageByColour : MonoBehaviour
     readonly HashSet<Vector3Int> _loadedCells = new HashSet<Vector3Int>();
     readonly HashSet<Vector3Int> _desiredCells = new HashSet<Vector3Int>();
     readonly HashSet<Vector3Int> _queued = new HashSet<Vector3Int>();
+    struct ExternalStreamRequest
+    {
+        public Vector3 position;
+        public float radius;
+    }
+    readonly List<ExternalStreamRequest> _externalStreamRequests = new List<ExternalStreamRequest>(32);
+    readonly List<Vector3> _externalEvalSnapshot = new List<Vector3>(32);
     // Pending cells awaiting generation, kept in NEAREST-FIRST priority order. The list is sorted
     // FARTHEST-first against the live player position so the NEAREST pending cell sits at the END and pops
     // off in O(1) (RemoveAt(last)). Re-sorted on every streaming recompute (cell-cross / move threshold) so
@@ -1532,6 +1543,7 @@ public class FoliageByColour : MonoBehaviour
                 go.transform.localScale = prefab.transform.localScale * scale;
                 Stargrave.CameraOcclusion.FoliageOccluder.EnsureOn(go);
                 AddPooledToChunk(rt, go, placePos);
+                PooledInstanceCreated?.Invoke(go, rt.rule != null ? rt.rule.name : string.Empty);
                 BeginPooledPhaseIn(go.transform);
                 rt.placed++;
                 return PlaceResult.PlacedPooled;
@@ -1792,6 +1804,7 @@ public class FoliageByColour : MonoBehaviour
                     go.transform.localScale = prefab.transform.localScale * scale;
                     Stargrave.CameraOcclusion.FoliageOccluder.EnsureOn(go);
                     AddPooledToChunk(best, go, placePos);
+                    PooledInstanceCreated?.Invoke(go, best.rule != null ? best.rule.name : string.Empty);
                     BeginPooledPhaseIn(go.transform);
                     if (++instThisFrame >= maxInstantiatesPerFrame)
                     {
@@ -1821,11 +1834,9 @@ public class FoliageByColour : MonoBehaviour
         UpdatePooledPhaseIn();
 
         bool cull = !disableCulling;
-        // Single rule = camera frustum + small border. Distance is made effectively unlimited so it never
-        // removes foliage that is still inside the view (the serialized grass/objectDrawDistance fields are
-        // deliberately bypassed for this reason).
-        float gdd = EffectivelyUnlimitedDrawDistance;
-        float odd = EffectivelyUnlimitedDrawDistance;
+        // Frustum plus camera-distance: grass/object draw distances (or built-in defaults).
+        float gdd = grassDrawDistance > 0f ? grassDrawDistance : DefaultGrassDrawDistance;
+        float odd = objectDrawDistance > 0f ? objectDrawDistance : DefaultObjectDrawDistance;
 
         Camera cam = null;
         Vector3 camPos = Vector3.zero;
@@ -2015,6 +2026,97 @@ public class FoliageByColour : MonoBehaviour
     // Player-centered streaming
     // ----------------------------------------------------------------------------------------------------
 
+    /// <summary>
+    /// Keeps additional foliage areas loaded for autonomous systems such as faction economies.
+    /// Replaces the previous request set so moving workers do not leave stale bubbles behind.
+    /// </summary>
+    public void ReplaceExternalStreamRequests(IReadOnlyList<Vector3> positions, float radius)
+    {
+        radius = Mathf.Max(EffectiveChunkSize(), radius);
+        _externalStreamRequests.Clear();
+        if (positions != null)
+        {
+            for (int i = 0; i < positions.Count; i++)
+            {
+                _externalStreamRequests.Add(new ExternalStreamRequest
+                {
+                    position = positions[i],
+                    radius = radius
+                });
+            }
+        }
+
+        if (_ready && ExternalRequestsMoved() && TryGetStreamEvalPos(out Vector3 evalPos))
+            StreamingRecompute(evalPos);
+    }
+
+    /// <summary>
+    /// Keeps an additional foliage area loaded for autonomous systems such as faction economies.
+    /// The same existing tree/rock palette and streaming scatter path is used; this does not create
+    /// replacement resource scenery.
+    /// </summary>
+    public void RequestExternalStreamingArea(Vector3 position, float radius)
+    {
+        radius = Mathf.Max(EffectiveChunkSize(), radius);
+        bool changed = true;
+        for (int i = 0; i < _externalStreamRequests.Count; i++)
+        {
+            ExternalStreamRequest request = _externalStreamRequests[i];
+            if ((request.position - position).sqrMagnitude < 25f * 25f)
+            {
+                changed = (request.position - position).sqrMagnitude > 1f || radius > request.radius + 0.5f;
+                request.position = position;
+                request.radius = Mathf.Max(request.radius, radius);
+                _externalStreamRequests[i] = request;
+                if (changed && _ready && TryGetStreamEvalPos(out Vector3 existingPlayer))
+                    StreamingRecompute(existingPlayer);
+                return;
+            }
+        }
+        _externalStreamRequests.Add(new ExternalStreamRequest
+        {
+            position = position,
+            radius = radius
+        });
+
+        if (_ready && TryGetStreamEvalPos(out Vector3 playerPosition))
+            StreamingRecompute(playerPosition);
+    }
+
+    bool TryGetStreamEvalPos(out Vector3 pos)
+    {
+        if (TryResolvePlayerPos(out pos))
+            return true;
+        if (_externalStreamRequests.Count > 0)
+        {
+            pos = _externalStreamRequests[0].position;
+            return true;
+        }
+        pos = Vector3.zero;
+        return false;
+    }
+
+    bool ExternalRequestsMoved()
+    {
+        if (_externalStreamRequests.Count != _externalEvalSnapshot.Count)
+            return true;
+        float thr = EffectiveRestreamThreshold();
+        float thrSq = thr * thr;
+        for (int i = 0; i < _externalStreamRequests.Count; i++)
+        {
+            if ((_externalStreamRequests[i].position - _externalEvalSnapshot[i]).sqrMagnitude >= thrSq)
+                return true;
+        }
+        return false;
+    }
+
+    void SnapshotExternalRequests()
+    {
+        _externalEvalSnapshot.Clear();
+        for (int i = 0; i < _externalStreamRequests.Count; i++)
+            _externalEvalSnapshot.Add(_externalStreamRequests[i].position);
+    }
+
     Vector3Int WorldToCell(Vector3 pos)
     {
         float inv = 1f / Mathf.Max(0.0001f, EffectiveChunkSize());
@@ -2035,9 +2137,36 @@ public class FoliageByColour : MonoBehaviour
     // end). Cached as a field (_farthestFirst) so sorting allocates no delegate.
     int CompareFarthestFirst(Vector3Int a, Vector3Int b)
     {
-        float da = (CellCenter(a) - _sortPlayerPos).sqrMagnitude;
-        float db = (CellCenter(b) - _sortPlayerPos).sqrMagnitude;
+        float da = NearestStreamFocusDistanceSq(CellCenter(a));
+        float db = NearestStreamFocusDistanceSq(CellCenter(b));
         return db.CompareTo(da);
+    }
+
+    float NearestStreamFocusDistanceSq(Vector3 worldPos)
+    {
+        float best = (worldPos - _sortPlayerPos).sqrMagnitude;
+        for (int i = 0; i < _externalStreamRequests.Count; i++)
+        {
+            float d = (worldPos - _externalStreamRequests[i].position).sqrMagnitude;
+            if (d < best)
+                best = d;
+        }
+        return best;
+    }
+
+    bool IsNearStreamFocus(Vector3 cellCenter)
+    {
+        float nearR = EffectiveNearCellRadius();
+        float nearSq = nearR * nearR;
+        if (TryResolvePlayerPos(out Vector3 playerPos) &&
+            (cellCenter - playerPos).sqrMagnitude <= nearSq)
+            return true;
+        for (int i = 0; i < _externalStreamRequests.Count; i++)
+        {
+            if ((cellCenter - _externalStreamRequests[i].position).sqrMagnitude <= nearSq)
+                return true;
+        }
+        return false;
     }
 
     // Re-prioritise the pending load list nearest-first for the given player position. Called ONLY from a
@@ -2196,11 +2325,12 @@ public class FoliageByColour : MonoBehaviour
     {
         while (_ready)
         {
-            if (TryResolvePlayerPos(out var ppos))
+            if (TryGetStreamEvalPos(out var ppos))
             {
                 float thr = EffectiveRestreamThreshold();
                 if (!_hasEvalPos || _loadedCells.Count == 0 ||
-                    (ppos - _lastEvalPos).sqrMagnitude >= thr * thr)
+                    (ppos - _lastEvalPos).sqrMagnitude >= thr * thr ||
+                    ExternalRequestsMoved())
                 {
                     StreamingRecompute(ppos);
                     _lastEvalPos = ppos;
@@ -2238,10 +2368,10 @@ public class FoliageByColour : MonoBehaviour
                 }
 
                 // Keep the desired set fresh while draining a long queue so foliage tracks fast movement.
-                if (TryResolvePlayerPos(out var pp))
+                if (TryGetStreamEvalPos(out var pp))
                 {
                     float thr = EffectiveRestreamThreshold();
-                    if ((pp - _lastEvalPos).sqrMagnitude >= thr * thr)
+                    if ((pp - _lastEvalPos).sqrMagnitude >= thr * thr || ExternalRequestsMoved())
                     {
                         StreamingRecompute(pp);
                         _lastEvalPos = pp;
@@ -2297,6 +2427,39 @@ public class FoliageByColour : MonoBehaviour
             }
         }
 
+        // Keep requested autonomous-system areas loaded even when they are outside the
+        // player-centered foliage radius. All placement still goes through the existing
+        // surface, biome, water, and prefab rules.
+        for (int requestIndex = 0; requestIndex < _externalStreamRequests.Count; requestIndex++)
+        {
+            ExternalStreamRequest request = _externalStreamRequests[requestIndex];
+            int externalRange = Mathf.Min(
+                MaxCellScanRange,
+                Mathf.CeilToInt(request.radius / cs) + 1);
+            Vector3Int requestCell = WorldToCell(request.position);
+            float externalInclude = request.radius + halfDiag;
+            float externalIncludeSq = externalInclude * externalInclude;
+            for (int dx = -externalRange; dx <= externalRange; dx++)
+            for (int dy = -externalRange; dy <= externalRange; dy++)
+            for (int dz = -externalRange; dz <= externalRange; dz++)
+            {
+                var cell = new Vector3Int(requestCell.x + dx, requestCell.y + dy, requestCell.z + dz);
+                Vector3 cc = CellCenter(cell);
+                float dRadial = (cc - _center).magnitude;
+                if (dRadial + halfDiag < _waterLineRadius - cs) continue;
+                if (dRadial - halfDiag > _maxRadius + cs) continue;
+                if ((cc - request.position).sqrMagnitude > externalIncludeSq) continue;
+
+                _desiredCells.Add(cell);
+                if (!_loadedCells.Contains(cell) && !_queued.Contains(cell))
+                {
+                    _loadList.Add(cell);
+                    _queued.Add(cell);
+                    addedCells = true;
+                }
+            }
+        }
+
         // Re-prioritise the pending set nearest-first for the player's CURRENT position. Newly-added cells
         // (above) and any cells still pending from a previous eval are all re-ordered together, so the closest
         // unloaded cell is always generated next as the player moves. Cheap: runs only on a recompute, and
@@ -2310,12 +2473,25 @@ public class FoliageByColour : MonoBehaviour
             foreach (var cell in _loadedCells)
             {
                 Vector3 cc = CellCenter(cell);
-                if ((cc - playerPos).sqrMagnitude > unloadExcl * unloadExcl)
+                bool keepForExternal = false;
+                for (int i = 0; i < _externalStreamRequests.Count; i++)
+                {
+                    ExternalStreamRequest request = _externalStreamRequests[i];
+                    float keepRadius = request.radius + halfDiag;
+                    if ((cc - request.position).sqrMagnitude <= keepRadius * keepRadius)
+                    {
+                        keepForExternal = true;
+                        break;
+                    }
+                }
+                if (!keepForExternal && (cc - playerPos).sqrMagnitude > unloadExcl * unloadExcl)
                     _unloadScratch.Add(cell);
             }
             for (int i = 0; i < _unloadScratch.Count; i++)
                 UnloadCell(_unloadScratch[i]);
         }
+
+        SnapshotExternalRequests();
 
         if (logResults)
             Debug.Log($"[FoliageByColour] Stream eval @ {playerPos}: loaded {_loadedCells.Count}, desired {_desiredCells.Count}, pending {_loadList.Count} (nearest-first).");
@@ -2378,9 +2554,7 @@ public class FoliageByColour : MonoBehaviour
         // Near-cell priority: if this cell is in the player's immediate vicinity, EffectiveStreamRayBudget
         // will boost its per-frame ray budget so the foreground fills fast. Distant cells leave this false and
         // drain at the cheap steady rate, so the sustained per-frame cost (the stutter source) stays low.
-        float nearR = EffectiveNearCellRadius();
-        _currentCellNear = TryResolvePlayerPos(out var nearProbePos) &&
-                           (cellCenter - nearProbePos).sqrMagnitude <= nearR * nearR;
+        _currentCellNear = IsNearStreamFocus(cellCenter);
 
         // Guard: cells with no surface in their band (shouldn't be queued, but be safe) load as empty.
         float halfDiag = cs * 0.8660254f;
@@ -2598,6 +2772,7 @@ public class FoliageByColour : MonoBehaviour
                     go.transform.localScale = prefab.transform.localScale * scale;
                     Stargrave.CameraOcclusion.FoliageOccluder.EnsureOn(go);
                     AddPooledToChunk(best, go, placePos);
+                    PooledInstanceCreated?.Invoke(go, best.rule != null ? best.rule.name : string.Empty);
                     BeginPooledPhaseIn(go.transform);
                     if (++_streamInstCount >= maxInstantiatesPerFrame)
                     {
@@ -2637,9 +2812,7 @@ public class FoliageByColour : MonoBehaviour
         Vector3 cellOrigin = new Vector3(cell.x * cs, cell.y * cs, cell.z * cs);
         Vector3 cellCenter = cellOrigin + Vector3.one * (cs * 0.5f);
 
-        float nearR = EffectiveNearCellRadius();
-        _currentCellNear = TryResolvePlayerPos(out var nearProbePos) &&
-                           (cellCenter - nearProbePos).sqrMagnitude <= nearR * nearR;
+        _currentCellNear = IsNearStreamFocus(cellCenter);
 
         float halfDiag = cs * 0.8660254f;
         float dRadial = (cellCenter - _center).magnitude;

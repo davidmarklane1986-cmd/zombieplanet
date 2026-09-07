@@ -67,4 +67,29 @@ public static class WeaponCatalog
     {
         _cached = null;
     }
+
+    static readonly string[] ProjectileTintOrder =
+    {
+        "shotgun", "blaster", "rifle", "handgun", "smg"
+    };
+
+    static readonly Color[] ProjectileTintFallback =
+    {
+        new Color(1f, 0.72f, 0.15f, 1f),
+        new Color(0.35f, 0.95f, 1f, 1f),
+        new Color(0.35f, 1f, 0.45f, 1f),
+        new Color(1f, 0.35f, 0.2f, 1f),
+        new Color(0.85f, 0.35f, 1f, 1f)
+    };
+
+    /// <summary>Player weapon projectile tints, cycled by faction index.</summary>
+    public static Color ProjectileColorForIndex(int index)
+    {
+        int n = ProjectileTintOrder.Length;
+        int i = ((index % n) + n) % n;
+        WeaponDef weapon = GetById(ProjectileTintOrder[i]);
+        if (weapon != null)
+            return weapon.projectileColor;
+        return ProjectileTintFallback[i];
+    }
 }

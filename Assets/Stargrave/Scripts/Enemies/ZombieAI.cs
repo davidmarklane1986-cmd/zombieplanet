@@ -14,6 +14,8 @@ public class ZombieAI : MonoBehaviour
     const string RuntimeHitboxRootName = "RuntimeHitboxes";
 
     public static event System.Action ZombieKilled;
+    static readonly List<ZombieAI> s_Active = new List<ZombieAI>(64);
+    public static IReadOnlyList<ZombieAI> Active => s_Active;
 
     const int MaxActiveCorpses = 14;
     static readonly List<ZombieAI> s_Corpses = new List<ZombieAI>(16);
@@ -128,6 +130,8 @@ public class ZombieAI : MonoBehaviour
     static int _locomotionLogCount;
 
     Transform player;
+    FactionNpc _npcTarget;
+    bool _attackingNpc;
     Rigidbody rb;
     ZombieVoice _voice;
     Vector3 currentDirection;
@@ -168,17 +172,21 @@ public class ZombieAI : MonoBehaviour
     {
         LivingCount++;
         _livingCounted = true;
+        if (!s_Active.Contains(this))
+            s_Active.Add(this);
     }
 
     void OnDisable()
     {
         ReleaseLivingSlot();
+        s_Active.Remove(this);
     }
 
     void OnDestroy()
     {
         ReleaseLivingSlot();
         s_Corpses.Remove(this);
+        s_Active.Remove(this);
     }
 
     void ReleaseLivingSlot()
@@ -198,6 +206,8 @@ public class ZombieAI : MonoBehaviour
         _provoked = false;
         _cachedShouldAttack = false;
         _cachedChasing = false;
+        _npcTarget = null;
+        _attackingNpc = false;
         if (maxShotsToKill >= minShotsToKill && minShotsToKill > 0)
             currentHealth = Random.Range(minShotsToKill, maxShotsToKill + 1);
         else
@@ -613,12 +623,26 @@ public class ZombieAI : MonoBehaviour
 
     public void TakeDamage(int amount)
     {
-        if (_dead)
+        ApplyDamage(amount, true);
+    }
+
+    /// <summary>
+    /// Damage path for autonomous NPCs. Unlike player damage, it does not provoke the zombie
+    /// toward the neutral player.
+    /// </summary>
+    public void TakeDamageFromNpc(int amount, Transform attacker)
+    {
+        ApplyDamage(amount, false);
+    }
+
+    void ApplyDamage(int amount, bool provokePlayer)
+    {
+        if (_dead || amount <= 0)
             return;
         currentHealth -= amount;
 
-        // Part B: any damage forces aggro on the player, ignoring the normal detection radius.
-        Provoke();
+        if (provokePlayer)
+            Provoke();
 
         // Punchy generated impact thud, localised at the zombie (3D, pooled so it survives if the zombie dies).
         AudioManager.PlayHit(transform.position);
@@ -1030,17 +1054,24 @@ public class ZombieAI : MonoBehaviour
         if (gravityUp.sqrMagnitude < 1e-6f)
             gravityUp = Vector3.up;
 
-        if (player == null)
+        if (player == null && FactionRegistry.FindNearestNpc(transform.position, detectionRadius) == null)
         {
-            // Still drive Idle/Walk while the player ref is resolving.
+            // Still drive Idle/Walk while the player and faction registries are resolving.
             UpdateAnimator(gravityUp);
             return;
         }
 
         rb.AddForce(-gravityUp * gravityStrength, ForceMode.Acceleration);
 
-        Vector3 toPlayerWorld = player.position - transform.position;
-        float distanceToPlayerSq = toPlayerWorld.sqrMagnitude;
+        FactionNpc nearbyNpc = FactionRegistry.FindNearestNpc(transform.position, detectionRadius);
+        float distanceToPlayerSq = player != null
+            ? (player.position - transform.position).sqrMagnitude
+            : float.PositiveInfinity;
+        float distanceToNpcSq = nearbyNpc != null
+            ? (nearbyNpc.transform.position - transform.position).sqrMagnitude
+            : float.PositiveInfinity;
+        bool targetNpc = nearbyNpc != null && distanceToNpcSq < distanceToPlayerSq;
+        _npcTarget = targetNpc ? nearbyNpc : null;
         float attackRadiusSq = attackRadius * attackRadius;
         float detectionRadiusSq = detectionRadius * detectionRadius;
         float farSq = farDecisionDistance * farDecisionDistance;
@@ -1058,9 +1089,12 @@ public class ZombieAI : MonoBehaviour
         if (runDecision)
         {
             bool provoked = IsProvoked();
+            bool useNpcTarget = targetNpc && !provoked;
             // Detection does NOT require a full-AI performance slot — if the player is within range, aggro.
-            bool detectsPlayer = distanceToPlayerSq <= detectionRadiusSq;
-            bool chasing = provoked || detectsPlayer;
+            bool detectsPlayer = !useNpcTarget && distanceToPlayerSq <= detectionRadiusSq;
+            bool detectsNpc = useNpcTarget && distanceToNpcSq <= detectionRadiusSq;
+            bool chasing = provoked || detectsPlayer || detectsNpc;
+            _attackingNpc = useNpcTarget;
 
             // Keep an engaged provoked zombie locked on once it closes within detection range.
             if (provoked && detectsPlayer)
@@ -1075,17 +1109,17 @@ public class ZombieAI : MonoBehaviour
                 _cachedChasing = chasing;
                 _cachedTargetPos = landTarget;
             }
-            else if (chasing && distanceToPlayerSq <= attackRadiusSq)
+            else if (chasing && (useNpcTarget ? distanceToNpcSq : distanceToPlayerSq) <= attackRadiusSq)
             {
                 _cachedShouldAttack = true;
                 _cachedChasing = true;
-                _cachedTargetPos = player.position;
+                _cachedTargetPos = useNpcTarget ? nearbyNpc.transform.position : player.position;
             }
             else if (chasing)
             {
                 _cachedShouldAttack = false;
                 _cachedChasing = true;
-                _cachedTargetPos = player.position;
+                _cachedTargetPos = useNpcTarget ? nearbyNpc.transform.position : player.position;
             }
             else
             {
@@ -1252,7 +1286,11 @@ public class ZombieAI : MonoBehaviour
             return;
 
         nextAttackTime = Time.time + Mathf.Max(0.1f, attackCooldown);
-        if (player != null && !PlayerHealth.IsDead)
+        if (_attackingNpc && _npcTarget != null && !_npcTarget.IsDead)
+        {
+            _npcTarget.TakeFactionDamage(attackDamage, transform);
+        }
+        else if (player != null && !PlayerHealth.IsDead)
             player.SendMessage("TakeDamage", attackDamage, SendMessageOptions.DontRequireReceiver);
     }
 
