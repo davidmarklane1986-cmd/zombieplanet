@@ -47,7 +47,7 @@ public sealed class FactionSimulation : MonoBehaviour
     float _nextFoliageStream;
     readonly List<Vector3> _woodProspects = new List<Vector3>(256);
     readonly List<Vector3> _stoneProspects = new List<Vector3>(256);
-    float _nextTick;
+    readonly List<float> _nextFactionTicks = new List<float>(8);
     float _nextStartCheck;
     bool _started;
     bool _subscribedPlanet;
@@ -269,7 +269,6 @@ public sealed class FactionSimulation : MonoBehaviour
         BuildResourceProspectAtlas();
         CreateFactions();
         _started = true;
-        _nextTick = Time.time + directorTickInterval;
     }
 
     void CreateFactions()
@@ -549,6 +548,8 @@ public sealed class FactionSimulation : MonoBehaviour
         faction.Initialize(this, index, runtimeId, definition, axis, fallbackName);
         _factions.Add(faction);
         FactionRegistry.RegisterFaction(faction);
+        float stagger = directorTickInterval * ((_factions.Count - 1) / (float)Mathf.Max(2, maxFactionCount));
+        _nextFactionTicks.Add(Time.time + stagger);
         faction.SpawnInitialWorkers();
         if (verboseEvents)
             Debug.Log($"[FactionSimulation] {faction.DisplayName} spawned.", faction);
@@ -568,22 +569,31 @@ public sealed class FactionSimulation : MonoBehaviour
             }
             return;
         }
-        if (Time.time < _nextTick)
-            return;
-
-        float dt = Mathf.Max(0.01f, Time.time - (_nextTick - directorTickInterval));
-        _nextTick = Time.time + directorTickInterval;
-        for (int i = 0; i < _factions.Count; i++)
-        {
-            if (_factions[i] != null)
-                _factions[i].SimulationTick(dt);
-        }
-
         if (Time.time >= _nextFoliageStream)
             RefreshFactionFoliageStreaming();
 
+        TickDueFaction();
         EvaluateEngagement();
         EvaluateBalance();
+    }
+
+    void TickDueFaction()
+    {
+        int n = _factions.Count;
+        if (n == 0)
+            return;
+        while (_nextFactionTicks.Count < n)
+            _nextFactionTicks.Add(Time.time);
+        for (int i = 0; i < n; i++)
+        {
+            if (_factions[i] == null || Time.time < _nextFactionTicks[i])
+                continue;
+            float interval = Mathf.Max(0.1f, directorTickInterval);
+            float dt = Mathf.Max(0.01f, Time.time - (_nextFactionTicks[i] - interval));
+            _nextFactionTicks[i] = Time.time + interval;
+            _factions[i].SimulationTick(dt);
+            return;
+        }
     }
 
     void EvaluateEngagement()

@@ -173,6 +173,22 @@ static class FactionNpcLod
     static Vector3 s_CamPos;
     static bool s_HasCam;
 
+    public static float PhaseOffset(int seed, float interval)
+    {
+        unchecked
+        {
+            uint hash = (uint)seed * 747796405u + 2891336453u;
+            hash ^= hash >> 16;
+            float u = (hash & 2047u) * (1f / 2048f);
+            return u * Mathf.Max(0.01f, interval);
+        }
+    }
+
+    public static int PhaseSeed(UnityEngine.Object obj)
+    {
+        return obj == null ? 0 : (int)EntityId.ToULong(obj.GetEntityId());
+    }
+
     public static bool IsFar(Vector3 worldPosition)
     {
         EnsureCamera();
@@ -501,46 +517,8 @@ public sealed class FactionNpcMotor : MonoBehaviour
         float diameter = radius * 2f;
         float diameterSq = diameter * diameter;
         Vector3 push = Vector3.zero;
-
-        IReadOnlyList<FactionNpc> npcs = FactionRegistry.Npcs;
-        for (int i = 0; i < npcs.Count; i++)
-        {
-            FactionNpc other = npcs[i];
-            if (other == null || other == _npc || other.IsDead)
-                continue;
-            AccumulateSeparation(ref push, position, other.transform.position, up, diameter, diameterSq);
-        }
-
-        IReadOnlyList<ZombieAI> zombies = ZombieAwareness.CachedZombies;
-        for (int i = 0; i < zombies.Count; i++)
-        {
-            ZombieAI zombie = zombies[i];
-            if (zombie == null || zombie.IsDead)
-                continue;
-            AccumulateSeparation(ref push, position, zombie.transform.position, up, diameter, diameterSq);
-        }
-
+        FactionCrowdGrid.AddSeparation(_npc, position, up, diameter, diameterSq, ref push);
         return Vector3.ClampMagnitude(push, radius);
-    }
-
-    static void AccumulateSeparation(
-        ref Vector3 push,
-        Vector3 position,
-        Vector3 other,
-        Vector3 up,
-        float diameter,
-        float diameterSq)
-    {
-        Vector3 planar = Vector3.ProjectOnPlane(position - other, up);
-        float distSq = planar.sqrMagnitude;
-        if (distSq > diameterSq)
-            return;
-
-        float dist = Mathf.Sqrt(Mathf.Max(distSq, 1e-6f));
-        Vector3 away = distSq > 1e-6f
-            ? planar / dist
-            : Vector3.Cross(up, Vector3.right).normalized;
-        push += away * (diameter - dist);
     }
 
     void SnapToSurface(Vector3 candidate)

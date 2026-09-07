@@ -22,9 +22,29 @@ public sealed class FactionController : MonoBehaviour
     readonly List<float> _stoneSiteUsed = new List<float>(8);
     const int MaxStreamFoci = 6;
     const int MaxResourceSites = 8;
+    const int MaxPerceivedThreats = 8;
     const float StreamFocusMergeDistance = 45f;
     const float ResourceSiteMergeDistance = 45f;
     FactionStateMachine _stateMachine;
+    readonly FactionNpc[] _enemyThreats = new FactionNpc[MaxPerceivedThreats];
+    readonly float[] _enemyThreatDist = new float[MaxPerceivedThreats];
+    int _enemyThreatCount;
+    readonly ZombieAI[] _zombieThreats = new ZombieAI[MaxPerceivedThreats];
+    readonly float[] _zombieThreatDist = new float[MaxPerceivedThreats];
+    int _zombieThreatCount;
+    ResourceNode _perceivedWood;
+    ResourceNode _perceivedStone;
+    float _nextPerception;
+    bool _perceptionPhased;
+    int _resourceScanIndex;
+    ResourceNode _scanWood;
+    ResourceNode _scanStone;
+    float _scanWoodSq;
+    float _scanStoneSq;
+    readonly Vector3[] _senseAnchors = new Vector3[8];
+    int _senseAnchorCount;
+    readonly Vector3[] _gatherAnchors = new Vector3[12];
+    int _gatherAnchorCount;
 
     public int RuntimeIndex { get; private set; }
     public string RuntimeId { get; private set; }
@@ -110,6 +130,24 @@ public sealed class FactionController : MonoBehaviour
         _stateMachine = gameObject.AddComponent<FactionStateMachine>();
         _stateMachine.Initialize(this);
         EnsureBaseArea();
+    }
+
+    void Update()
+    {
+        if (_simulation == null)
+            return;
+        RefreshResourcePerceptionSlice();
+        float interval = Mathf.Max(0.05f, Economy.combatDecisionInterval);
+        if (!_perceptionPhased)
+        {
+            _perceptionPhased = true;
+            _nextPerception = Time.time + FactionNpcLod.PhaseOffset(RuntimeIndex * 997 + 13, interval);
+            return;
+        }
+        if (Time.time < _nextPerception)
+            return;
+        _nextPerception = Time.time + interval;
+        RefreshThreatPerception();
     }
 
     void EnsureBaseArea()
@@ -1453,6 +1491,288 @@ public sealed class FactionController : MonoBehaviour
         CurrentRival = null;
         if (rival != null && rival.CurrentRival == this)
             rival.BindRival(null);
+    }
+
+    public bool TryGetPerceivedResource(FactionResourceType type, out ResourceNode node)
+    {
+        node = type == FactionResourceType.Stone ? _perceivedStone : _perceivedWood;
+        if (node == null || !node.IsAvailable || !node.CanReserve(this))
+        {
+            node = null;
+            return false;
+        }
+        return true;
+    }
+
+    public bool TryGetPerceivedThreat(
+        Vector3 from,
+        float radius,
+        out FactionNpc npc,
+        out ZombieAI zombie,
+        out int nearby)
+    {
+        npc = null;
+        zombie = null;
+        nearby = 0;
+        float radiusSq = radius * radius;
+        float bestNpcSq = radiusSq;
+        float bestZombieSq = radiusSq;
+        for (int i = 0; i < _enemyThreatCount; i++)
+        {
+            FactionNpc threat = _enemyThreats[i];
+            if (threat == null || threat.IsDead || !threat.IsFactionTargetable)
+                continue;
+            if (!FactionRegistry.IsCombatTarget(threat, this))
+                continue;
+            float d = (threat.transform.position - from).sqrMagnitude;
+            if (d > radiusSq)
+                continue;
+            nearby++;
+            if (d <= bestNpcSq)
+            {
+                bestNpcSq = d;
+                npc = threat;
+            }
+        }
+
+        for (int i = 0; i < _zombieThreatCount; i++)
+        {
+            ZombieAI threat = _zombieThreats[i];
+            if (threat == null || threat.IsDead)
+                continue;
+            float d = (threat.transform.position - from).sqrMagnitude;
+            if (d > radiusSq)
+                continue;
+            nearby++;
+            if (d <= bestZombieSq)
+            {
+                bestZombieSq = d;
+                zombie = threat;
+            }
+        }
+
+        return nearby > 0;
+    }
+
+    public void CountPerceivedSoldiersNear(
+        Vector3 position,
+        float radius,
+        out int friends,
+        out int foes)
+    {
+        friends = 0;
+        foes = 0;
+        float radiusSq = radius * radius;
+        for (int i = 0; i < _soldiers.Count; i++)
+        {
+            FactionNpc npc = _soldiers[i];
+            if (npc == null || npc.IsDead)
+                continue;
+            if ((npc.transform.position - position).sqrMagnitude <= radiusSq)
+                friends++;
+        }
+
+        for (int i = 0; i < _enemyThreatCount; i++)
+        {
+            FactionNpc npc = _enemyThreats[i];
+            if (npc == null || npc.IsDead || npc.Role != FactionNpcRole.Soldier)
+                continue;
+            if ((npc.transform.position - position).sqrMagnitude <= radiusSq)
+                foes++;
+        }
+    }
+
+    void RefreshResourcePerceptionSlice()
+    {
+        IReadOnlyList<ResourceNode> resources = FactionRegistry.Resources;
+        int n = resources.Count;
+        if (n <= 0)
+            return;
+
+        float search = Combat.workerFoliageRadius > 0f ? Combat.workerFoliageRadius : 140f;
+        float searchSq = search * search;
+        if (_resourceScanIndex == 0)
+        {
+            CollectGatherAnchors();
+            _scanWood = null;
+            _scanStone = null;
+            _scanWoodSq = searchSq;
+            _scanStoneSq = searchSq;
+        }
+
+        const int budget = 32;
+        int end = Mathf.Min(n, _resourceScanIndex + budget);
+        for (int i = _resourceScanIndex; i < end; i++)
+        {
+            ResourceNode node = resources[i];
+            if (node == null || !node.CanReserve(this))
+                continue;
+            float d = MinDistToAnchors(node.transform.position, _gatherAnchors, _gatherAnchorCount);
+            if (node.ResourceType == FactionResourceType.Stone)
+            {
+                if (d <= _scanStoneSq)
+                {
+                    _scanStoneSq = d;
+                    _scanStone = node;
+                }
+            }
+            else if (d <= _scanWoodSq)
+            {
+                _scanWoodSq = d;
+                _scanWood = node;
+            }
+        }
+
+        _resourceScanIndex = end;
+        if (_resourceScanIndex < n)
+            return;
+
+        _resourceScanIndex = 0;
+        _perceivedWood = _scanWood;
+        _perceivedStone = _scanStone;
+        if (_perceivedWood != null)
+        {
+            RememberResourceSite(FactionResourceType.Wood, _perceivedWood.transform.position);
+            RememberStreamFocus(_perceivedWood.transform.position, true, FactionResourceType.Wood);
+        }
+        if (_perceivedStone != null)
+        {
+            RememberResourceSite(FactionResourceType.Stone, _perceivedStone.transform.position);
+            RememberStreamFocus(_perceivedStone.transform.position, true, FactionResourceType.Stone);
+        }
+    }
+
+    void CollectGatherAnchors()
+    {
+        int n = 0;
+        _gatherAnchors[n++] = GetSafePosition();
+        int wood = Mathf.Min(3, _woodSites.Count);
+        for (int i = 0; i < wood && n < _gatherAnchors.Length; i++)
+            _gatherAnchors[n++] = _woodSites[i];
+        int stone = Mathf.Min(2, _stoneSites.Count);
+        for (int i = 0; i < stone && n < _gatherAnchors.Length; i++)
+            _gatherAnchors[n++] = _stoneSites[i];
+        int workers = CountLiving(_workers);
+        int step = Mathf.Max(1, workers / 4);
+        int seen = 0;
+        for (int i = 0; i < _workers.Count && n < _gatherAnchors.Length; i++)
+        {
+            FactionNpc worker = _workers[i];
+            if (worker == null || worker.IsDead)
+                continue;
+            if ((seen++ % step) != 0 && seen > 1)
+                continue;
+            _gatherAnchors[n++] = worker.transform.position;
+        }
+        _gatherAnchorCount = n;
+    }
+
+    void CollectSenseAnchors()
+    {
+        int n = 0;
+        _senseAnchors[n++] = GetSafePosition();
+        if (HasDefensePing && n < _senseAnchors.Length)
+            _senseAnchors[n++] = DefensePoint;
+        if (HasBackupPing && n < _senseAnchors.Length)
+            _senseAnchors[n++] = BackupPoint;
+        if (Time.time - _hostileContactTime < 8f && n < _senseAnchors.Length)
+            _senseAnchors[n++] = _hostileContact;
+        int added = 0;
+        for (int i = 0; i < _members.Count && n < _senseAnchors.Length && added < 4; i++)
+        {
+            FactionNpc npc = _members[i];
+            if (npc == null || npc.IsDead)
+                continue;
+            if ((i & 1) != 0 && _members.Count > 4)
+                continue;
+            _senseAnchors[n++] = npc.transform.position;
+            added++;
+        }
+        _senseAnchorCount = n;
+    }
+
+    static float MinDistToAnchors(Vector3 position, Vector3[] anchors, int count)
+    {
+        float best = float.PositiveInfinity;
+        for (int i = 0; i < count; i++)
+        {
+            float d = (position - anchors[i]).sqrMagnitude;
+            if (d < best)
+                best = d;
+        }
+        return best;
+    }
+
+    void RefreshThreatPerception()
+    {
+        _enemyThreatCount = 0;
+        _zombieThreatCount = 0;
+        float sense = Combat.soldierDefendRadius > 0f ? Combat.soldierDefendRadius : 80f;
+        float senseSq = sense * sense;
+        IReadOnlyList<FactionNpc> npcs = FactionRegistry.Npcs;
+        CollectSenseAnchors();
+        for (int i = 0; i < npcs.Count; i++)
+        {
+            FactionNpc npc = npcs[i];
+            if (npc == null || npc.Faction == this || npc.IsDead)
+                continue;
+            if (!FactionRegistry.IsCombatTarget(npc, this))
+                continue;
+            float d = MinDistToAnchors(npc.transform.position, _senseAnchors, _senseAnchorCount);
+            if (d <= senseSq)
+                InsertThreat(_enemyThreats, _enemyThreatDist, ref _enemyThreatCount, npc, d);
+        }
+
+        IReadOnlyList<ZombieAI> zombies = ZombieAI.Active;
+        for (int i = 0; i < zombies.Count; i++)
+        {
+            ZombieAI zombie = zombies[i];
+            if (zombie == null || zombie.IsDead)
+                continue;
+            float d = MinDistToAnchors(zombie.transform.position, _senseAnchors, _senseAnchorCount);
+            if (d <= senseSq)
+                InsertThreat(_zombieThreats, _zombieThreatDist, ref _zombieThreatCount, zombie, d);
+        }
+
+        if (State == FactionState.Retreating || State == FactionState.Recovering)
+            return;
+        if (_enemyThreatCount == 0 && _zombieThreatCount == 0)
+            return;
+
+        Vector3 home = GetSafePosition();
+        if (!TryGetPerceivedThreat(home, sense, out FactionNpc homeEnemy, out ZombieAI homeZombie, out int nearBase) ||
+            nearBase <= 0)
+            return;
+
+        Vector3 ping = homeEnemy != null
+            ? homeEnemy.transform.position
+            : homeZombie != null
+                ? homeZombie.transform.position
+                : home;
+        RequestDefense(ping);
+    }
+
+    static void InsertThreat<T>(T[] items, float[] distances, ref int count, T item, float distSq)
+        where T : class
+    {
+        if (count < items.Length)
+        {
+            items[count] = item;
+            distances[count] = distSq;
+            count++;
+            return;
+        }
+
+        int worst = 0;
+        for (int i = 1; i < count; i++)
+        {
+            if (distances[i] > distances[worst])
+                worst = i;
+        }
+        if (distSq >= distances[worst])
+            return;
+        items[worst] = item;
+        distances[worst] = distSq;
     }
 
     static FactionNpc FindNearestLiving(List<FactionNpc> list, Vector3 position)

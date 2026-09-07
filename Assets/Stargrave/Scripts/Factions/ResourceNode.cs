@@ -19,7 +19,14 @@ public sealed class ResourceNode : MonoBehaviour
 
     public FactionResourceType ResourceType => resourceType;
     public int CurrentAmount { get; private set; }
-    public bool IsAvailable => CurrentAmount > 0 && Time.time >= _cooldownUntil;
+    public bool IsAvailable
+    {
+        get
+        {
+            TryRefill();
+            return CurrentAmount > 0;
+        }
+    }
     public int WorkerCount => _workers.Count;
 
     void Awake()
@@ -92,7 +99,7 @@ public sealed class ResourceNode : MonoBehaviour
         return amount;
     }
 
-    void Update()
+    void TryRefill()
     {
         if (_cooldownUntil > 0f && Time.time >= _cooldownUntil)
         {
@@ -160,7 +167,12 @@ public sealed class FoliageResourceAdapter : MonoBehaviour
 
     FoliageByColour _foliage;
     float _nextScan;
+    int _scanContainer = -1;
+    int _scanChild;
+    int _syncCursor;
     readonly Dictionary<GameObject, ResourceNode> _sources = new Dictionary<GameObject, ResourceNode>(512);
+    readonly List<GameObject> _sourceKeys = new List<GameObject>(512);
+    readonly List<GameObject> _deadSources = new List<GameObject>(16);
 
     public static FoliageResourceAdapter EnsureExists(FoliageByColour foliage)
     {
@@ -197,16 +209,66 @@ public sealed class FoliageResourceAdapter : MonoBehaviour
 
     void Update()
     {
+        SyncSlice();
+        if (_scanContainer >= 0)
+        {
+            ScanNextContainer();
+            return;
+        }
         if (Time.time < _nextScan)
             return;
         _nextScan = Time.time + Mathf.Max(1f, rescanInterval);
-        ScanExisting();
-        PruneDestroyedSources();
+        _scanContainer = 0;
+        ScanNextContainer();
     }
 
     void OnPooledInstanceCreated(GameObject source, string ruleName)
     {
         RegisterSource(source, ruleName);
+    }
+
+    void ScanNextContainer()
+    {
+        if (_foliage == null)
+        {
+            _scanContainer = -1;
+            _scanChild = 0;
+            return;
+        }
+
+        Transform foliageRoot = _foliage.transform;
+        const int childBudget = 12;
+        int done = 0;
+        while (_scanContainer < foliageRoot.childCount && done < childBudget)
+        {
+            Transform container = foliageRoot.GetChild(_scanContainer);
+            if (container == null ||
+                container.name.IndexOf("Foliage_", System.StringComparison.OrdinalIgnoreCase) < 0)
+            {
+                _scanContainer++;
+                _scanChild = 0;
+                continue;
+            }
+
+            while (_scanChild < container.childCount && done < childBudget)
+            {
+                RegisterSource(container.GetChild(_scanChild).gameObject, container.name, container.GetChild(_scanChild));
+                _scanChild++;
+                done++;
+            }
+
+            if (_scanChild >= container.childCount)
+            {
+                _scanContainer++;
+                _scanChild = 0;
+            }
+        }
+
+        if (_scanContainer >= foliageRoot.childCount)
+        {
+            _scanContainer = -1;
+            _scanChild = 0;
+        }
     }
 
     void ScanExisting()
@@ -271,6 +333,7 @@ public sealed class FoliageResourceAdapter : MonoBehaviour
         node.Configure(type, nodeCapacity, gatherRate,
             type == FactionResourceType.Wood ? treeCooldownSeconds : rockCooldownSeconds);
         _sources.Add(source, node);
+        _sourceKeys.Add(source);
     }
 
     bool TryEvictLeastUsefulNode(Vector3 incomingPosition, FactionResourceType incomingType)
@@ -313,6 +376,7 @@ public sealed class FoliageResourceAdapter : MonoBehaviour
         if (worstNode != null)
             Destroy(worstNode.gameObject);
         _sources.Remove(worst);
+        _sourceKeys.Remove(worst);
         return true;
     }
 
@@ -362,24 +426,40 @@ public sealed class FoliageResourceAdapter : MonoBehaviour
         return false;
     }
 
-    void PruneDestroyedSources()
+    void SyncSlice()
     {
-        var dead = new List<GameObject>();
-        foreach (var pair in _sources)
+        int n = _sourceKeys.Count;
+        if (n == 0)
+            return;
+        if (_syncCursor >= n)
+            _syncCursor = 0;
+
+        const int budget = 16;
+        _deadSources.Clear();
+        for (int b = 0; b < budget && _sourceKeys.Count > 0; b++)
         {
-            if (pair.Key == null)
+            if (_syncCursor >= _sourceKeys.Count)
+                _syncCursor = 0;
+            GameObject key = _sourceKeys[_syncCursor];
+            if (key == null || !_sources.TryGetValue(key, out ResourceNode node) || node == null)
             {
-                if (pair.Value != null)
-                    Destroy(pair.Value.gameObject);
-                dead.Add(pair.Key);
+                _deadSources.Add(key);
+                _syncCursor++;
+                continue;
             }
-            else if (pair.Value != null)
-            {
-                pair.Value.transform.position = pair.Key.transform.position;
-            }
+
+            node.transform.position = key.transform.position;
+            _syncCursor++;
         }
-        for (int i = 0; i < dead.Count; i++)
-            _sources.Remove(dead[i]);
+
+        for (int i = 0; i < _deadSources.Count; i++)
+        {
+            GameObject key = _deadSources[i];
+            if (key != null && _sources.TryGetValue(key, out ResourceNode node) && node != null)
+                Destroy(node.gameObject);
+            _sources.Remove(key);
+            _sourceKeys.Remove(key);
+        }
     }
 
     public int RegisteredNodeCount => _sources.Count;

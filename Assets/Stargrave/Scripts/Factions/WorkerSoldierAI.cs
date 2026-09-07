@@ -25,6 +25,7 @@ public sealed class WorkerAI : MonoBehaviour
     FactionResourceType _gatherTask;
     bool _hasGatherTask;
     float _nextSearch;
+    float _nextHostileScan;
     float _gatherAccumulator;
     float _nextAttack;
     Vector3 _prospect;
@@ -33,7 +34,8 @@ public sealed class WorkerAI : MonoBehaviour
     readonly List<Vector3> _skippedProspects = new List<Vector3>(16);
     const int EmptySearchesBeforeHop = 4;
 
-    float _lodAccum;
+    float _lodNext;
+    bool _phased;
 
     public bool HasGatherTask => _hasGatherTask;
     public FactionResourceType GatherTask => _gatherTask;
@@ -75,18 +77,30 @@ public sealed class WorkerAI : MonoBehaviour
 
     void Update()
     {
+        EnsurePhases();
         if (FactionNpcLod.IsFar(transform.position))
         {
-            _lodAccum += Time.deltaTime;
-            if (_lodAccum < FactionNpcLod.AiInterval)
+            if (Time.time < _lodNext)
                 return;
-            Tick(_lodAccum);
-            _lodAccum = 0f;
+            _lodNext = Time.time + FactionNpcLod.AiInterval;
+            Tick(FactionNpcLod.AiInterval);
             return;
         }
 
-        _lodAccum = 0f;
         Tick(Time.deltaTime);
+    }
+
+    void EnsurePhases()
+    {
+        if (_phased || _npc == null || _npc.Faction == null)
+            return;
+        _phased = true;
+        int seed = FactionNpcLod.PhaseSeed(this);
+        float combat = Mathf.Max(0.05f, _npc.Faction.Economy.combatDecisionInterval);
+        float work = Mathf.Max(0.05f, _npc.Faction.Economy.workerDecisionInterval);
+        _nextSearch = Time.time + FactionNpcLod.PhaseOffset(seed, work);
+        _nextHostileScan = Time.time + FactionNpcLod.PhaseOffset(seed ^ 0x9e3779, combat);
+        _lodNext = Time.time + FactionNpcLod.PhaseOffset(seed ^ unchecked((int)0x85ebca6b), FactionNpcLod.AiInterval);
     }
 
     public void Tick(float deltaTime)
@@ -183,29 +197,50 @@ public sealed class WorkerAI : MonoBehaviour
 
     bool HandleHostiles()
     {
+        if (Time.time >= _nextHostileScan)
+            ScanHostiles();
+
+        if (_state == WorkState.Fleeing)
+            return ResumeAfterFlee();
+        if (_state == WorkState.FightingHostile)
+            return TickFightHostiles();
+        return false;
+    }
+
+    void ScanHostiles()
+    {
+        float interval = _npc.Faction.Economy.combatDecisionInterval > 0f
+            ? _npc.Faction.Economy.combatDecisionInterval
+            : 0.25f;
+        _nextHostileScan = Time.time + interval;
+
         FactionCombatSettings combat = _npc.Faction.Combat;
         float radius = combat.workerFightRadius;
-        int zombies = ZombieAwareness.CountThreats(transform.position, radius);
-        int enemies = FactionRegistry.WarfareEnabled
-            ? FactionRegistry.CountEnemyNpcs(transform.position, radius, _npc.Faction)
-            : 0;
-        int nearby = zombies + enemies;
-        ZombieAwareness.TryFindThreat(transform.position, radius, out ZombieAI nearestZombie);
-        FactionNpc nearestEnemy = FactionRegistry.WarfareEnabled
-            ? FactionRegistry.FindNearestNpc(transform.position, radius, _npc.Faction)
-            : null;
+        _npc.Faction.TryGetPerceivedThreat(
+            transform.position,
+            radius,
+            out FactionNpc nearestEnemy,
+            out ZombieAI nearestZombie,
+            out int nearby);
+        bool canFightFactions = FactionRegistry.WarfareEnabled &&
+                                !FactionRegistry.IsWarfareProtected(_npc.Faction);
+        if (!canFightFactions)
+        {
+            nearestEnemy = null;
+            nearby = nearestZombie != null ? 1 : 0;
+        }
 
         if (nearby <= 0)
         {
+            _zombieTarget = null;
+            _npcTarget = null;
             if (_state == WorkState.FightingHostile)
             {
-                _zombieTarget = null;
-                _npcTarget = null;
                 _state = _inventory != null && _inventory.IsFull
                     ? WorkState.GoingToDeposit
                     : WorkState.LookingForResource;
             }
-            return _state == WorkState.Fleeing && ResumeAfterFlee();
+            return;
         }
 
         _npc.Faction.RequestDefense(transform.position);
@@ -221,8 +256,7 @@ public sealed class WorkerAI : MonoBehaviour
                 LeaveBuild();
                 _state = WorkState.Fleeing;
             }
-            _npc.Motor.SetDestination(GetBasePosition(), combat.workerMoveSpeed, 3f);
-            return true;
+            return;
         }
 
         LeaveBuild();
@@ -235,31 +269,51 @@ public sealed class WorkerAI : MonoBehaviour
         {
             _npcTarget = nearestEnemy;
             _zombieTarget = null;
-            _npc.Motor.SetDestination(
-                nearestEnemy.transform.position,
-                combat.workerMoveSpeed,
-                combat.workerAttackRange);
-            if (_npc.Motor.IsStopped && Time.time >= _nextAttack)
-            {
-                _nextAttack = Time.time + combat.workerAttackCooldown;
-                nearestEnemy.TakeFactionDamage(combat.workerDamage, transform);
-            }
         }
-        else if (nearestZombie != null)
+        else
         {
             _zombieTarget = nearestZombie;
             _npcTarget = null;
+        }
+    }
+
+    bool TickFightHostiles()
+    {
+        FactionCombatSettings combat = _npc.Faction.Combat;
+        if (_npcTarget != null && !_npcTarget.IsDead && _npcTarget.isActiveAndEnabled)
+        {
             _npc.Motor.SetDestination(
-                nearestZombie.transform.position,
+                _npcTarget.transform.position,
                 combat.workerMoveSpeed,
                 combat.workerAttackRange);
             if (_npc.Motor.IsStopped && Time.time >= _nextAttack)
             {
                 _nextAttack = Time.time + combat.workerAttackCooldown;
-                nearestZombie.TakeDamageFromNpc(combat.workerDamage, transform);
+                _npcTarget.TakeFactionDamage(combat.workerDamage, transform);
             }
+            return true;
         }
-        return true;
+        if (_zombieTarget != null && !_zombieTarget.IsDead)
+        {
+            _npc.Motor.SetDestination(
+                _zombieTarget.transform.position,
+                combat.workerMoveSpeed,
+                combat.workerAttackRange);
+            if (_npc.Motor.IsStopped && Time.time >= _nextAttack)
+            {
+                _nextAttack = Time.time + combat.workerAttackCooldown;
+                _zombieTarget.TakeDamageFromNpc(combat.workerDamage, transform);
+            }
+            return true;
+        }
+
+        _npcTarget = null;
+        _zombieTarget = null;
+        _nextHostileScan = 0f;
+        _state = _inventory != null && _inventory.IsFull
+            ? WorkState.GoingToDeposit
+            : WorkState.LookingForResource;
+        return false;
     }
 
     bool ResumeAfterFlee()
@@ -281,21 +335,9 @@ public sealed class WorkerAI : MonoBehaviour
         if (!_hasGatherTask)
             _npc.Faction.AssignGatherTask(_npc);
 
-        float radius = _npc.Faction.Combat.workerResourceSearchRadius;
-        ResourceNode nearby = FactionRegistry.FindNearestAvailableResource(
-            transform.position, _gatherTask, _npc.Faction, radius);
-        if (nearby != null)
-            _npc.Faction.RememberResourceSite(_gatherTask, nearby.transform.position);
-
-        ResourceNode node = nearby;
-        if (node == null &&
-            _npc.Faction.TryGetNearestResourceSite(_gatherTask, transform.position, out Vector3 knownSite))
-        {
-            node = FactionRegistry.FindNearestAvailableResource(
-                knownSite, _gatherTask, _npc.Faction, radius);
-            if (node != null)
-                _npc.Faction.RememberResourceSite(_gatherTask, node.transform.position);
-        }
+        ResourceNode node = null;
+        if (_npc.Faction.TryGetPerceivedResource(_gatherTask, out ResourceNode perceived))
+            node = perceived;
         if (node == null || !node.Reserve(_npc))
             return false;
 
@@ -490,10 +532,12 @@ public sealed class SoldierAI : MonoBehaviour
     float _nextDecision;
     float _nextAttack;
     float _nextSkirmish;
+    float _nextBackup;
     bool _safe;
     bool _hasDuty;
     bool _lastShotHit;
-    float _lodAccum;
+    float _lodNext;
+    bool _phased;
 
     public bool IsSafeAtBase => _safe;
     public bool IsInCombat =>
@@ -507,18 +551,29 @@ public sealed class SoldierAI : MonoBehaviour
 
     void Update()
     {
+        EnsurePhases();
         if (FactionNpcLod.IsFar(transform.position))
         {
-            _lodAccum += Time.deltaTime;
-            if (_lodAccum < FactionNpcLod.AiInterval)
+            if (Time.time < _lodNext)
                 return;
-            Tick(_lodAccum);
-            _lodAccum = 0f;
+            _lodNext = Time.time + FactionNpcLod.AiInterval;
+            Tick(FactionNpcLod.AiInterval);
             return;
         }
 
-        _lodAccum = 0f;
         Tick(Time.deltaTime);
+    }
+
+    void EnsurePhases()
+    {
+        if (_phased || _npc == null || _npc.Faction == null)
+            return;
+        _phased = true;
+        int seed = FactionNpcLod.PhaseSeed(this);
+        float combat = Mathf.Max(0.05f, _npc.Faction.Economy.combatDecisionInterval);
+        _nextDecision = Time.time + FactionNpcLod.PhaseOffset(seed, combat);
+        _nextBackup = Time.time + FactionNpcLod.PhaseOffset(seed ^ 0x9e3779, combat);
+        _lodNext = Time.time + FactionNpcLod.PhaseOffset(seed ^ unchecked((int)0x85ebca6b), FactionNpcLod.AiInterval);
     }
 
     public void Tick(float deltaTime)
@@ -532,12 +587,13 @@ public sealed class SoldierAI : MonoBehaviour
         {
             _factionTarget = null;
             _hasDuty = false;
-            if (ZombieAwareness.TryFindThreat(
-                    transform.position,
-                    _npc.Faction.Combat.zombieThreatRadius,
-                    out ZombieAI homeZombie) &&
-                homeZombie != null &&
-                !homeZombie.IsDead)
+            _npc.Faction.TryGetPerceivedThreat(
+                transform.position,
+                _npc.Faction.Combat.zombieThreatRadius,
+                out _,
+                out ZombieAI homeZombie,
+                out _);
+            if (homeZombie != null && !homeZombie.IsDead)
             {
                 _zombieTarget = homeZombie;
                 EngageZombie(deltaTime);
@@ -566,6 +622,9 @@ public sealed class SoldierAI : MonoBehaviour
             EngageZombie(deltaTime);
             return;
         }
+        if (_factionTarget != null &&
+            FactionRegistry.IsWarfareProtected(_factionTarget.OwningFaction))
+            _factionTarget = null;
         if (_factionTarget != null && _factionTarget.IsFactionTargetable)
         {
             _hasDuty = false;
@@ -619,36 +678,51 @@ public sealed class SoldierAI : MonoBehaviour
                          _npc.Faction.State == FactionState.Retreating;
         if (FactionRegistry.WarfareEnabled && !ceasefire)
         {
-            FactionNpc nearbyEnemy = FactionRegistry.FindNearestNpc(transform.position, engage, _npc.Faction);
+            _npc.Faction.TryGetPerceivedThreat(
+                transform.position,
+                engage,
+                out FactionNpc nearbyEnemy,
+                out ZombieAI nearbyZombie,
+                out _);
             if (nearbyEnemy != null)
             {
                 _factionTarget = nearbyEnemy;
                 _npc.Faction.RememberHostileContact(nearbyEnemy.transform.position);
                 return;
             }
+            if (nearbyZombie != null)
+            {
+                _zombieTarget = nearbyZombie;
+                return;
+            }
         }
-
-        if (ZombieAwareness.TryFindThreat(transform.position, _npc.Faction.Combat.zombieThreatRadius, out ZombieAI zombie))
+        else
         {
-            _zombieTarget = zombie;
-            return;
+            _npc.Faction.TryGetPerceivedThreat(
+                transform.position,
+                _npc.Faction.Combat.zombieThreatRadius,
+                out _,
+                out ZombieAI nearbyZombie,
+                out _);
+            if (nearbyZombie != null)
+            {
+                _zombieTarget = nearbyZombie;
+                return;
+            }
         }
 
         if (_npc.Faction.HasDefensePing)
         {
             Vector3 ping = _npc.Faction.DefensePoint;
             float defend = _npc.Faction.Combat.soldierDefendRadius;
-            if (FactionRegistry.WarfareEnabled)
+            _npc.Faction.TryGetPerceivedThreat(ping, defend, out FactionNpc enemy, out ZombieAI pingZombie, out _);
+            if (FactionRegistry.WarfareEnabled && enemy != null)
             {
-                FactionNpc enemy = FactionRegistry.FindNearestNpc(ping, defend, _npc.Faction);
-                if (enemy != null)
-                {
-                    _factionTarget = enemy;
-                    _npc.Faction.RememberHostileContact(enemy.transform.position);
-                    return;
-                }
+                _factionTarget = enemy;
+                _npc.Faction.RememberHostileContact(enemy.transform.position);
+                return;
             }
-            if (ZombieAwareness.TryFindThreat(ping, defend, out ZombieAI pingZombie))
+            if (pingZombie != null)
             {
                 _zombieTarget = pingZombie;
                 return;
@@ -662,17 +736,14 @@ public sealed class SoldierAI : MonoBehaviour
             float defend = _npc.Faction.Combat.soldierEngageRadius > 0f
                 ? _npc.Faction.Combat.soldierEngageRadius
                 : 40f;
-            if (FactionRegistry.WarfareEnabled)
+            _npc.Faction.TryGetPerceivedThreat(ping, defend, out FactionNpc enemy, out ZombieAI backupZombie, out _);
+            if (FactionRegistry.WarfareEnabled && enemy != null)
             {
-                FactionNpc enemy = FactionRegistry.FindNearestNpc(ping, defend, _npc.Faction);
-                if (enemy != null)
-                {
-                    _factionTarget = enemy;
-                    _npc.Faction.RememberHostileContact(enemy.transform.position);
-                    return;
-                }
+                _factionTarget = enemy;
+                _npc.Faction.RememberHostileContact(enemy.transform.position);
+                return;
             }
-            if (ZombieAwareness.TryFindThreat(ping, defend, out ZombieAI backupZombie))
+            if (backupZombie != null)
             {
                 _zombieTarget = backupZombie;
                 return;
@@ -685,7 +756,7 @@ public sealed class SoldierAI : MonoBehaviour
             return;
 
         FactionController opposing = FactionRegistry.FindOpposingFaction(_npc.Faction);
-        if (opposing == null)
+        if (opposing == null || FactionRegistry.IsWarfareProtected(opposing))
             return;
         FactionNpc target = opposing.FindNearestWorker(transform.position);
         FactionNpc soldier = opposing.FindNearestSoldier(transform.position);
@@ -736,10 +807,17 @@ public sealed class SoldierAI : MonoBehaviour
 
     void RequestFightBackup(Vector3 fight)
     {
+        float interval = _npc.Faction.Economy.combatDecisionInterval > 0f
+            ? _npc.Faction.Economy.combatDecisionInterval
+            : 0.25f;
+        if (Time.time < _nextBackup)
+            return;
+        _nextBackup = Time.time + interval;
+
         float radius = _npc.Faction.Combat.soldierEngageRadius > 0f
             ? _npc.Faction.Combat.soldierEngageRadius
             : 40f;
-        FactionRegistry.CountSoldiersNear(fight, radius, _npc.Faction, out int friends, out int foes);
+        _npc.Faction.CountPerceivedSoldiersNear(fight, radius, out int friends, out int foes);
         int extra = 2 + Mathf.Max(0, foes - friends) * 2;
         _npc.Faction.RequestSkirmishBackup(fight, extra);
     }
@@ -938,6 +1016,8 @@ static class FactionSoldierHitscan
         {
             if (!FactionRegistry.WarfareEnabled)
                 return false;
+            if (!FactionRegistry.IsCombatTarget(building, shooter.Faction))
+                return false;
             building.TakeFactionDamage(damage, shooter.transform);
             return true;
         }
@@ -953,64 +1033,44 @@ static class FactionSoldierHitscan
     }
 }
 
-/// <summary>Shared, throttled zombie lookup for faction NPCs.</summary>
+/// <summary>Shared zombie lookup for faction NPCs.</summary>
 public static class ZombieAwareness
 {
-    static ZombieAI[] s_Zombies = new ZombieAI[0];
-    static float s_NextRefresh;
-
-    public static IReadOnlyList<ZombieAI> CachedZombies
-    {
-        get
-        {
-            RefreshIfNeeded();
-            return s_Zombies;
-        }
-    }
+    public static IReadOnlyList<ZombieAI> CachedZombies => ZombieAI.Active;
 
     public static bool TryFindThreat(Vector3 position, float radius, out ZombieAI result)
     {
-        RefreshIfNeeded();
-
-        float bestSq = radius * radius;
-        result = null;
-        for (int i = 0; i < s_Zombies.Length; i++)
-        {
-            ZombieAI zombie = s_Zombies[i];
-            if (zombie == null || zombie.IsDead)
-                continue;
-            float d = (zombie.transform.position - position).sqrMagnitude;
-            if (d <= bestSq)
-            {
-                bestSq = d;
-                result = zombie;
-            }
-        }
+        CountThreats(position, radius, out result);
         return result != null;
     }
 
     public static int CountThreats(Vector3 position, float radius)
     {
-        RefreshIfNeeded();
-        float radiusSq = radius * radius;
-        int count = 0;
-        for (int i = 0; i < s_Zombies.Length; i++)
-        {
-            ZombieAI zombie = s_Zombies[i];
-            if (zombie == null || zombie.IsDead)
-                continue;
-            if ((zombie.transform.position - position).sqrMagnitude <= radiusSq)
-                count++;
-        }
-        return count;
+        return CountThreats(position, radius, out _);
     }
 
-    static void RefreshIfNeeded()
+    public static int CountThreats(Vector3 position, float radius, out ZombieAI nearest)
     {
-        if (Time.time < s_NextRefresh)
-            return;
-        s_NextRefresh = Time.time + 0.75f;
-        s_Zombies = Object.FindObjectsByType<ZombieAI>(
-            FindObjectsInactive.Exclude, FindObjectsSortMode.None);
+        nearest = null;
+        float radiusSq = radius * radius;
+        float bestSq = radiusSq;
+        int count = 0;
+        IReadOnlyList<ZombieAI> zombies = ZombieAI.Active;
+        for (int i = 0; i < zombies.Count; i++)
+        {
+            ZombieAI zombie = zombies[i];
+            if (zombie == null || zombie.IsDead)
+                continue;
+            float d = (zombie.transform.position - position).sqrMagnitude;
+            if (d > radiusSq)
+                continue;
+            count++;
+            if (d <= bestSq)
+            {
+                bestSq = d;
+                nearest = zombie;
+            }
+        }
+        return count;
     }
 }

@@ -22,7 +22,8 @@ public sealed class MerchantAI : MonoBehaviour
     MerchantState _state;
     int _carriedGold;
     float _wait;
-    float _lodAccum;
+    float _lodNext;
+    bool _phased;
 
     public string DebugStatus
     {
@@ -60,10 +61,14 @@ public sealed class MerchantAI : MonoBehaviour
 
         if (FactionNpcLod.IsFar(transform.position))
         {
-            _lodAccum += Time.deltaTime;
-            if (_lodAccum < FactionNpcLod.AiInterval)
+            if (!_phased)
+            {
+                _phased = true;
+                _lodNext = Time.time + FactionNpcLod.PhaseOffset(FactionNpcLod.PhaseSeed(this), FactionNpcLod.AiInterval);
+            }
+            if (Time.time < _lodNext)
                 return;
-            _lodAccum = 0f;
+            _lodNext = Time.time + FactionNpcLod.AiInterval;
         }
 
         if (_partner != null && FactionTradeSystem.AreFighting(_npc.Faction, _partner) &&
