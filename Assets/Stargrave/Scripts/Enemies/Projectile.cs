@@ -52,6 +52,8 @@ public class Projectile : MonoBehaviour
     Vector3 _spawnPosition;
     int _baseDamage;
 
+    Transform _ignoreRoot;
+
     void Awake()
     {
         _spawnPosition = transform.position;
@@ -79,6 +81,11 @@ public class Projectile : MonoBehaviour
         // Trail is often created in Start; rebuild now so weapon colour shows on first frame.
         if (enableTrail)
             ConfigureTrail();
+    }
+
+    public void SetIgnoreRoot(Transform root)
+    {
+        _ignoreRoot = root;
     }
 
     int GetDamageAtPoint(Vector3 hitPoint)
@@ -202,6 +209,8 @@ public class Projectile : MonoBehaviour
         if (other.GetComponentInParent<Projectile>() != null)
             return true;
         if (other.gameObject.layer == 2)
+            return true;
+        if (_ignoreRoot != null && other.transform.IsChildOf(_ignoreRoot))
             return true;
         return false;
     }

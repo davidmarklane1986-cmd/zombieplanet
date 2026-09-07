@@ -811,109 +811,74 @@ public sealed class SoldierAI : MonoBehaviour
     }
 }
 
-static class FactionShotTracers
+static class FactionSoldierProjectiles
 {
-    const float Lifetime = 0.08f;
-    const float Width = 0.1f;
+    static GameObject s_Prefab;
+    static float s_Speed = 160f;
+    static bool s_Resolved;
 
-    static Transform _root;
-    static Material _material;
-    static readonly List<LineRenderer> _idle = new List<LineRenderer>(16);
-
-    public static void Show(Vector3 from, Vector3 to, Color color)
+    public static void Spawn(Vector3 origin, Vector3 direction, float travelDistance, Color tint, Transform ignoreRoot)
     {
-        LineRenderer line = Take();
-        if (line == null)
+        if (direction.sqrMagnitude < 1e-8f)
             return;
-        line.enabled = true;
-        line.startColor = color;
-        line.endColor = color;
-        line.SetPosition(0, from);
-        line.SetPosition(1, to);
-        TracerLease lease = line.GetComponent<TracerLease>();
-        if (lease == null)
-            lease = line.gameObject.AddComponent<TracerLease>();
-        lease.ReleaseAt = Time.time + Lifetime;
-        lease.enabled = true;
+        direction.Normalize();
+        EnsurePrefab();
+        GameObject instance;
+        if (s_Prefab != null)
+            instance = Object.Instantiate(s_Prefab, origin, Quaternion.LookRotation(direction));
+        else
+            instance = CreateFallbackBolt(origin, direction);
+
+        var proj = instance.GetComponent<Projectile>();
+        if (proj == null)
+            proj = instance.AddComponent<Projectile>();
+        proj.ConfigureFromWeapon(tint, 0, false, 0f, 1f, 1f);
+        proj.SetIgnoreRoot(ignoreRoot);
+        proj.lifetime = Mathf.Clamp(travelDistance / Mathf.Max(40f, s_Speed) + 0.12f, 0.12f, 2f);
+
+        Rigidbody rb = instance.GetComponent<Rigidbody>();
+        if (rb != null)
+            rb.linearVelocity = direction * s_Speed;
+        else
+        {
+            var mover = instance.GetComponent<ProjectileMover>();
+            if (mover == null)
+                mover = instance.AddComponent<ProjectileMover>();
+            mover.direction = direction;
+            mover.speed = s_Speed;
+        }
     }
 
-    public static void Recycle(LineRenderer line)
+    static void EnsurePrefab()
     {
-        if (line == null)
+        if (s_Resolved)
             return;
-        line.enabled = false;
-        _idle.Add(line);
-    }
-
-    static LineRenderer Take()
-    {
-        EnsureRoot();
-        while (_idle.Count > 0)
+        s_Resolved = true;
+        PlayerShooting shooting = Object.FindFirstObjectByType<PlayerShooting>(FindObjectsInactive.Include);
+        if (shooting != null)
         {
-            int last = _idle.Count - 1;
-            LineRenderer reuse = _idle[last];
-            _idle.RemoveAt(last);
-            if (reuse != null)
-                return reuse;
+            s_Prefab = shooting.projectilePrefab;
+            if (shooting.projectileSpeed > 1f)
+                s_Speed = shooting.projectileSpeed;
         }
-
-        var go = new GameObject("Tracer");
-        go.transform.SetParent(_root, false);
-        LineRenderer line = go.AddComponent<LineRenderer>();
-        line.positionCount = 2;
-        line.useWorldSpace = true;
-        line.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
-        line.receiveShadows = false;
-        line.textureMode = LineTextureMode.Stretch;
-        line.numCapVertices = 2;
-        line.startWidth = Width;
-        line.endWidth = Width * 0.55f;
-        line.material = SharedMaterial();
-        line.enabled = false;
-        return line;
+        if (s_Prefab == null)
+            s_Prefab = Resources.Load<GameObject>("Projectile");
     }
 
-    static void EnsureRoot()
+    static GameObject CreateFallbackBolt(Vector3 origin, Vector3 direction)
     {
-        if (_root != null)
-            return;
-        var go = new GameObject("FactionShotTracers");
-        Object.DontDestroyOnLoad(go);
-        _root = go.transform;
-    }
-
-    static Material SharedMaterial()
-    {
-        if (_material != null)
-            return _material;
-        Shader shader = Shader.Find("Sprites/Default");
-        if (shader == null)
-            shader = Shader.Find("Universal Render Pipeline/Unlit");
-        if (shader == null)
-            shader = Shader.Find("Hidden/Internal-Colored");
-        if (shader != null)
-            _material = new Material(shader) { name = "FactionShotTracer" };
-        return _material;
-    }
-
-    sealed class TracerLease : MonoBehaviour
-    {
-        public float ReleaseAt;
-        LineRenderer _line;
-
-        void Awake()
-        {
-            _line = GetComponent<LineRenderer>();
-        }
-
-        void Update()
-        {
-            if (Time.time < ReleaseAt)
-                return;
-            enabled = false;
-            FactionShotTracers.Recycle(_line);
-        }
-
+        GameObject go = GameObject.CreatePrimitive(PrimitiveType.Sphere);
+        go.name = "FactionProjectile";
+        go.transform.position = origin;
+        go.transform.rotation = Quaternion.LookRotation(direction);
+        go.transform.localScale = Vector3.one * 0.3f;
+        SphereCollider col = go.GetComponent<SphereCollider>();
+        if (col != null)
+            col.isTrigger = true;
+        var rb = go.AddComponent<Rigidbody>();
+        rb.useGravity = false;
+        rb.collisionDetectionMode = CollisionDetectionMode.Continuous;
+        return go;
     }
 }
 
@@ -933,8 +898,8 @@ static class FactionSoldierHitscan
 
         Vector3 direction = delta / distance;
         origin += direction * 0.55f;
-        Color tracer = shooter.Faction != null ? shooter.Faction.UiColor : Color.white;
-        tracer.a = 1f;
+        Color bolt = shooter.Faction != null ? shooter.Faction.UiColor : Color.white;
+        bolt.a = 1f;
         if (!Physics.Raycast(
                 origin,
                 direction,
@@ -943,13 +908,11 @@ static class FactionSoldierHitscan
                 ~0,
                 QueryTriggerInteraction.Ignore))
         {
-            Color miss = tracer;
-            miss.a = 0.45f;
-            FactionShotTracers.Show(origin, origin + direction * range, miss);
+            FactionSoldierProjectiles.Spawn(origin, direction, range, bolt, shooter.transform);
             return false;
         }
 
-        FactionShotTracers.Show(origin, hit.point, tracer);
+        FactionSoldierProjectiles.Spawn(origin, direction, hit.distance, bolt, shooter.transform);
         if (hit.collider.GetComponentInParent<PlanetMotor_InputSystem>() != null)
             return false;
         if (hit.collider.GetComponentInParent<PlayerHealth>() != null)
