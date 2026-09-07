@@ -4,7 +4,8 @@ using UnityEngine;
 public enum BuildingKind
 {
     TownHall,
-    Barracks
+    Barracks,
+    Market
 }
 
 [DisallowMultipleComponent]
@@ -40,6 +41,8 @@ public class Building : MonoBehaviour, IFactionDamageable
         if (!IsFactionTargetable || amount <= 0)
             return;
         CurrentHealth = Mathf.Max(0, CurrentHealth - amount);
+        if (Faction != null)
+            FactionTradeSystem.NotifyHostileDamage(Faction, attacker);
         if (CurrentHealth == 0)
         {
             IsDestroyed = true;
@@ -63,13 +66,18 @@ public sealed class TownHall : Building
     public Vector3 RetreatPoint => transform.position;
 }
 
+public sealed class Market : Building
+{
+}
+
 public sealed class Barracks : Building
 {
     enum TrainKind
     {
         None,
         ResourceGatherer,
-        Soldier
+        Soldier,
+        Merchant
     }
 
     float _trainingTimer;
@@ -92,7 +100,9 @@ public sealed class Barracks : Building
 
         float duration = _queuedKind == TrainKind.ResourceGatherer
             ? Faction.Economy.workerTrainingSeconds
-            : Faction.Economy.soldierTrainingSeconds;
+            : _queuedKind == TrainKind.Merchant
+                ? Faction.Economy.merchantTrainingSeconds
+                : Faction.Economy.soldierTrainingSeconds;
         _trainingTimer += deltaTime * modifier;
         if (_trainingTimer < duration)
             return;
@@ -123,6 +133,23 @@ public sealed class Barracks : Building
             Faction.WorkerCount < Faction.Economy.startingWorkers)
             return;
 
+        int minSoldiers = Faction.Warfare.minSoldiersToPropose > 0
+            ? Faction.Warfare.minSoldiersToPropose
+            : 6;
+        bool armyReady = Faction.SoldierCount >= minSoldiers;
+        if (armyReady &&
+            Faction.Market != null &&
+            Faction.Market.IsOperational &&
+            Faction.MerchantCount < Faction.Economy.merchantMaxCount &&
+            Faction.WantsMerchantTrade() &&
+            Faction.TrySpendMerchantTraining())
+        {
+            _queued = 1;
+            _queuedKind = TrainKind.Merchant;
+            _trainingTimer = 0f;
+            return;
+        }
+
         if (Faction.SoldierCount < Faction.Economy.soldierMaxCount &&
             Faction.HasResources(Faction.Economy.soldierCost) &&
             Faction.TrySpendAvailableCost(Faction.Economy.soldierCost))
@@ -143,6 +170,9 @@ public sealed class Barracks : Building
         if (kind == TrainKind.Soldier &&
             Faction.SoldierCount >= Faction.Economy.soldierMaxCount)
             return;
+        if (kind == TrainKind.Merchant &&
+            Faction.MerchantCount >= Faction.Economy.merchantMaxCount)
+            return;
 
         Vector3 axis = (transform.position - Faction.Simulation.planet.transform.position).normalized;
         Vector3 tangent = Vector3.Cross(axis, Mathf.Abs(Vector3.Dot(axis, Vector3.up)) > 0.9f
@@ -151,16 +181,24 @@ public sealed class Barracks : Building
         axis = (axis + Quaternion.AngleAxis(Random.Range(0f, 360f), axis) *
             tangent * 0.004f).normalized;
 
-        FactionNpc npc = kind == TrainKind.ResourceGatherer
-            ? FactionNpc.CreateResourceGatherer(Faction, axis)
-            : FactionNpc.CreateSoldier(Faction, axis);
+        FactionNpc npc;
+        if (kind == TrainKind.ResourceGatherer)
+            npc = FactionNpc.CreateResourceGatherer(Faction, axis);
+        else if (kind == TrainKind.Merchant)
+            npc = FactionNpc.CreateMerchant(Faction, axis);
+        else
+            npc = FactionNpc.CreateSoldier(Faction, axis);
         if (npc == null)
             return;
 
         Faction.RegisterNpc(npc);
         if (Faction.Simulation.verboseEvents)
         {
-            string label = kind == TrainKind.ResourceGatherer ? "worker" : "soldier";
+            string label = kind == TrainKind.ResourceGatherer
+                ? "worker"
+                : kind == TrainKind.Merchant
+                    ? "merchant"
+                    : "soldier";
             Debug.Log($"[FactionSimulation] {Faction.DisplayName} trained a {label}.", Faction);
         }
     }
@@ -187,6 +225,7 @@ public sealed class BuildingConstructionSite : MonoBehaviour
 
     readonly List<FactionNpc> _builders = new List<FactionNpc>(4);
     GameObject _visual;
+    Vector3 _visualFitScale = Vector3.one;
 
     public void Configure(
         FactionController faction,
@@ -204,6 +243,8 @@ public sealed class BuildingConstructionSite : MonoBehaviour
 
         if (kind == BuildingKind.TownHall)
             Building = gameObject.AddComponent<TownHall>();
+        else if (kind == BuildingKind.Market)
+            Building = gameObject.AddComponent<Market>();
         else
             Building = gameObject.AddComponent<Barracks>();
         Building.Configure(faction, kind);
@@ -221,13 +262,15 @@ public sealed class BuildingConstructionSite : MonoBehaviour
             _visual = GameObject.CreatePrimitive(PrimitiveType.Cube);
             _visual.name = $"{kind}_FallbackVisual";
             _visual.transform.SetParent(transform, false);
-            _visual.transform.localPosition = new Vector3(0f, kind == BuildingKind.TownHall ? 6f : 2.5f, 0f);
+            float height = kind == BuildingKind.TownHall ? 32f : 10f;
+            _visual.transform.localPosition = new Vector3(0f, height * 0.5f, 0f);
             _visual.transform.localScale = kind == BuildingKind.TownHall
-                ? new Vector3(6f, 12f, 6f)
-                : new Vector3(5f, 5f, 5f);
+                ? new Vector3(10f, 32f, 10f)
+                : new Vector3(5f, 10f, 5f);
             Collider col = _visual.GetComponent<Collider>();
             if (col != null)
                 Object.Destroy(col);
+            _visualFitScale = _visual.transform.localScale;
         }
     }
 
@@ -339,7 +382,7 @@ public sealed class BuildingConstructionSite : MonoBehaviour
             float scale = Mathf.Lerp(0.25f, 1f, MaterialsDelivered
                 ? Mathf.Clamp01(ConstructionProgress01)
                 : 0.2f);
-            _visual.transform.localScale = Vector3.one * scale;
+            _visual.transform.localScale = _visualFitScale * scale;
         }
     }
 
@@ -379,16 +422,10 @@ public sealed class BuildingConstructionSite : MonoBehaviour
                 collider.convex = false;
             }
         }
-        Bounds bounds;
-        Renderer[] renderers = _visual.GetComponentsInChildren<Renderer>(true);
-        if (renderers.Length == 0)
-            return;
-        bounds = renderers[0].bounds;
-        for (int i = 1; i < renderers.Length; i++)
-            bounds.Encapsulate(renderers[i].bounds);
-        float targetHeight = kind == BuildingKind.TownHall ? 24f : 10f;
-        if (bounds.size.y > 0.01f)
-            _visual.transform.localScale *= targetHeight / bounds.size.y;
+        BuildingSpawner.ApplyTownScale(_visual, kind == BuildingKind.TownHall
+            ? BuildingSizeClass.Tall
+            : BuildingSizeClass.Short);
+        _visualFitScale = _visual.transform.localScale;
     }
 }
 
@@ -550,6 +587,7 @@ public static class BuildingPlacementSystem
 
     public static bool TryCreateNearTownHall(
         FactionController faction,
+        BuildingKind kind,
         GameObject prefab,
         float minDistance,
         float maxDistance,
@@ -588,7 +626,7 @@ public static class BuildingPlacementSystem
                 float yaw = slot * (Mathf.PI * 2f / slots);
                 Vector3 candidate = OffsetOnSurface(planet, axis, yaw, dist);
                 if (!TryCreateConstructionSite(
-                        faction, BuildingKind.Barracks, prefab, candidate, flatRadius, blendWidth,
+                        faction, kind, prefab, candidate, flatRadius, blendWidth,
                         cost, buildSeconds, maxBuilders, out site, 16, maxDistance + 8f))
                     continue;
                 return true;
@@ -611,7 +649,8 @@ public static class BuildingPlacementSystem
             if (other.TownHall != null && other.TownHall.IsOperational)
             {
                 float hallDistance = Vector3.Distance(other.TownHall.transform.position, position);
-                float clearance = other == faction && kind == BuildingKind.Barracks
+                float clearance = other == faction &&
+                    (kind == BuildingKind.Barracks || kind == BuildingKind.Market)
                     ? other.Economy.townHallFlatRadius + 2f
                     : padRadius * 1.5f + 12f;
                 if (hallDistance < clearance)
@@ -619,10 +658,16 @@ public static class BuildingPlacementSystem
             }
             if (other.Barracks != null && other.Barracks.IsOperational)
             {
-                // Own barracks sits on the village ring; it must not block rebuilding the hall.
                 if (other == faction && kind == BuildingKind.TownHall)
                     continue;
                 if (Vector3.Distance(other.Barracks.transform.position, position) < padRadius + 8f)
+                    return true;
+            }
+            if (other.Market != null && other.Market.IsOperational)
+            {
+                if (other == faction && kind == BuildingKind.TownHall)
+                    continue;
+                if (Vector3.Distance(other.Market.transform.position, position) < padRadius + 8f)
                     return true;
             }
             if (other.ActiveConstruction != null &&

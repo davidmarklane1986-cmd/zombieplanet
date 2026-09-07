@@ -303,7 +303,7 @@ public sealed class WorkerAI : MonoBehaviour
         _state = WorkState.GoingToResource;
         _npc.Motor.SetDestination(node.transform.position, _npc.Faction.Combat.workerMoveSpeed, 2f);
         _npc.Faction.RememberResourceSite(_gatherTask, node.transform.position);
-        _npc.Faction.RememberStreamFocus(node.transform.position, true);
+        _npc.Faction.RememberStreamFocus(node.transform.position, true, _gatherTask);
         return true;
     }
 
@@ -348,9 +348,9 @@ public sealed class WorkerAI : MonoBehaviour
 
         _state = WorkState.Wandering;
         _npc.Motor.SetDestination(destination, _npc.Faction.Combat.workerMoveSpeed, 2f);
-        _npc.Faction.RememberStreamFocus(destination, true);
+        _npc.Faction.RememberStreamFocus(destination, true, _gatherTask);
         if (_hasProspect)
-            _npc.Faction.RememberStreamFocus(_prospect, true);
+            _npc.Faction.RememberStreamFocus(_prospect, true, _gatherTask);
     }
 
     void Gather(float deltaTime)
@@ -701,6 +701,8 @@ public sealed class SoldierAI : MonoBehaviour
         }
         else if (opposing.Barracks != null && opposing.Barracks.IsOperational)
             _factionTarget = opposing.Barracks;
+        else if (opposing.Market != null && opposing.Market.IsOperational)
+            _factionTarget = opposing.Market;
         else if (opposing.TownHall != null && opposing.TownHall.IsOperational)
             _factionTarget = opposing.TownHall;
     }
@@ -961,6 +963,8 @@ static class FactionSoldierHitscan
             if (npc.Faction == shooter.Faction || npc.IsDead)
                 return false;
             if (!FactionRegistry.WarfareEnabled)
+                return false;
+            if (!FactionRegistry.IsCombatTarget(npc, shooter.Faction))
                 return false;
             npc.TakeFactionDamage(damage, shooter.transform);
             return true;

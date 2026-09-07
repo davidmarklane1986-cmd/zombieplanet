@@ -12,6 +12,7 @@ public sealed class FactionNpc : MonoBehaviour, IFactionDamageable
     public FactionHealth Health { get; private set; }
     public WorkerAI Worker { get; private set; }
     public SoldierAI Soldier { get; private set; }
+    public MerchantAI Merchant { get; private set; }
     public bool IsDead => Health == null || Health.IsDead;
     public int CurrentHealth => Health != null ? Health.CurrentHealth : 0;
     public int MaxHealth => Health != null ? Health.MaxHealth : 1;
@@ -43,13 +44,27 @@ public sealed class FactionNpc : MonoBehaviour, IFactionDamageable
             surfaceAxis);
     }
 
+    public static FactionNpc CreateMerchant(FactionController faction, Vector3 surfaceAxis)
+    {
+        if (faction == null || faction.Simulation == null)
+            return null;
+
+        return Create(
+            faction,
+            FactionNpcRole.Merchant,
+            faction.Simulation.workerCharacter,
+            surfaceAxis);
+    }
+
     static FactionNpc Create(
         FactionController faction,
         FactionNpcRole role,
         PlayableCharacterDef character,
         Vector3 surfaceAxis)
     {
-        string label = role == FactionNpcRole.ResourceGatherer ? "Worker" : role.ToString();
+        string label = role == FactionNpcRole.ResourceGatherer
+            ? "Worker"
+            : role.ToString();
         var go = new GameObject($"{faction.DisplayName}_{label}");
         go.transform.SetParent(faction.transform, false);
         var npc = go.AddComponent<FactionNpc>();
@@ -85,13 +100,18 @@ public sealed class FactionNpc : MonoBehaviour, IFactionDamageable
         go.AddComponent<CharacterAlign>();
         npc.Motor = go.AddComponent<FactionNpcMotor>();
         npc.Health = go.AddComponent<FactionHealth>();
-        npc.Health.Configure(role == FactionNpcRole.ResourceGatherer
-            ? Mathf.Max(1, faction.Combat.soldierMaxHealth / 2)
-            : faction.Combat.soldierMaxHealth);
+        npc.Health.Configure(role == FactionNpcRole.Soldier
+            ? faction.Combat.soldierMaxHealth
+            : Mathf.Max(1, faction.Combat.soldierMaxHealth / 2));
 
         if (role == FactionNpcRole.ResourceGatherer)
         {
             npc.Worker = go.AddComponent<WorkerAI>();
+            go.AddComponent<WorkerInventory>();
+        }
+        else if (role == FactionNpcRole.Merchant)
+        {
+            npc.Merchant = go.AddComponent<MerchantAI>();
             go.AddComponent<WorkerInventory>();
         }
         else
@@ -646,6 +666,8 @@ public sealed class FactionHealth : MonoBehaviour
         if (IsDead || amount <= 0)
             return;
         CurrentHealth = Mathf.Max(0, CurrentHealth - amount);
+        if (_npc != null && _npc.Faction != null)
+            FactionTradeSystem.NotifyHostileDamage(_npc.Faction, attacker);
         if (CurrentHealth == 0)
             Die();
     }

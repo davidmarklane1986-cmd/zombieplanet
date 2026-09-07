@@ -30,6 +30,7 @@ public sealed class FactionSimulation : MonoBehaviour
     public PlayableCharacterDef soldierCharacter;
     public GameObject townHallPrefab;
     public GameObject barracksPrefab;
+    public GameObject marketPrefab;
 
     [Header("Faction data")]
     public FactionDefinition[] factionDefinitions;
@@ -194,6 +195,10 @@ public sealed class FactionSimulation : MonoBehaviour
                 townHallPrefab = variant.prefab;
             if (barracksPrefab == null && name.IndexOf("house-b", System.StringComparison.OrdinalIgnoreCase) >= 0)
                 barracksPrefab = variant.prefab;
+            if (marketPrefab == null && name.IndexOf("house-c", System.StringComparison.OrdinalIgnoreCase) >= 0)
+                marketPrefab = variant.prefab;
+            if (marketPrefab == null && name.IndexOf("house-a", System.StringComparison.OrdinalIgnoreCase) >= 0)
+                marketPrefab = variant.prefab;
         }
 
         if (barracksPrefab == null)
@@ -226,6 +231,26 @@ public sealed class FactionSimulation : MonoBehaviour
                 }
             }
         }
+
+        if (marketPrefab == null)
+        {
+            for (int i = 0; i < buildingSpawner.variants.Count; i++)
+            {
+                BuildingSpawnVariant variant = buildingSpawner.variants[i];
+                if (variant == null || variant.prefab == null)
+                    continue;
+                if (variant.sizeClass == BuildingSizeClass.Short &&
+                    variant.prefab != barracksPrefab &&
+                    variant.prefab != townHallPrefab)
+                {
+                    marketPrefab = variant.prefab;
+                    break;
+                }
+            }
+        }
+
+        if (marketPrefab == null)
+            marketPrefab = barracksPrefab;
     }
 
     public void TryStart()
@@ -386,7 +411,7 @@ public sealed class FactionSimulation : MonoBehaviour
                 continue;
             if (!TryGetNextProspect(FactionResourceType.Stone, faction.GetSafePosition(), null, out Vector3 prospect))
                 continue;
-            faction.RememberStreamFocus(prospect, true);
+            faction.RememberStreamFocus(prospect, true, FactionResourceType.Stone);
         }
     }
 
@@ -408,6 +433,7 @@ public sealed class FactionSimulation : MonoBehaviour
             return;
 
         _nextFoliageStream = Time.time + 3f;
+        PinNearestStoneProspects();
         float radius = combat.workerFoliageRadius > 0f ? combat.workerFoliageRadius : 140f;
         _foliageStreamPoints.Clear();
         for (int i = 0; i < _factions.Count; i++)
@@ -643,9 +669,9 @@ public sealed class FactionSimulation : MonoBehaviour
             if (faction == null)
                 continue;
             GUILayout.Label($"{faction.DisplayName} [{faction.State}] " +
-                            $"W:{faction.WorkerCount} S:{faction.SoldierCount} " +
+                            $"W:{faction.WorkerCount} S:{faction.SoldierCount} M:{faction.MerchantCount} " +
                             $"gathered W:{faction.WoodGathered} S:{faction.StoneGathered} " +
-                            $"stock W:{faction.Wood} S:{faction.Stone} " +
+                            $"stock W:{faction.Wood} S:{faction.Stone} G:{faction.Gold} " +
                             $"sites W:{faction.GetResourceSiteCount(FactionResourceType.Wood)} " +
                             $"S:{faction.GetResourceSiteCount(FactionResourceType.Stone)} " +
                             $"Strength:{faction.Strength:0} " +
@@ -657,6 +683,14 @@ public sealed class FactionSimulation : MonoBehaviour
                                 $"S:{site.DeliveredStone}/{site.Cost.stone}");
             }
 
+            for (int j = 0; j < _factions.Count; j++)
+            {
+                FactionController other = _factions[j];
+                if (other == null || other == faction)
+                    continue;
+                GUILayout.Label($"  vs {other.DisplayName} trade:{FactionTradeSystem.GetRelation(faction, other):0.00}");
+            }
+
             IReadOnlyList<FactionNpc> workers = faction.Workers;
             for (int w = 0; w < workers.Count; w++)
             {
@@ -664,6 +698,17 @@ public sealed class FactionSimulation : MonoBehaviour
                 if (npc == null || npc.IsDead || npc.Worker == null)
                     continue;
                 GUILayout.Label($"  Worker {w}: {npc.Worker.DebugStatus}");
+            }
+
+            IReadOnlyList<FactionNpc> members = faction.Members;
+            int merchantIndex = 0;
+            for (int m = 0; m < members.Count; m++)
+            {
+                FactionNpc npc = members[m];
+                if (npc == null || npc.IsDead || npc.Role != FactionNpcRole.Merchant || npc.Merchant == null)
+                    continue;
+                GUILayout.Label($"  Merchant {merchantIndex}: {npc.Merchant.DebugStatus}");
+                merchantIndex++;
             }
         }
         GUILayout.EndArea();

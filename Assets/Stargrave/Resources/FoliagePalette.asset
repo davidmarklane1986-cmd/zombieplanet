@@ -520,8 +520,8 @@ MonoBehaviour:
     - {fileID: 5383951031300081424, guid: 85a3b90dace79bb43bb8393089f8b88f, type: 3}
     - {fileID: 6073450814551408090, guid: 63fa25f429fba7c429a4cdecc292feaa, type: 3}
     - {fileID: 7870841727713951114, guid: 6f20548546af6c2418a90216d200b64d, type: 3}
-    targetCount: 2500
-    minSpacing: 4
+    targetCount: 7500
+    minSpacing: 2.2
     edgeDensity: 0.1
     densityFalloff: 1.5
     maxOtherBiomeInfluence: 0.5
@@ -749,8 +749,8 @@ MonoBehaviour:
     - {fileID: 5383951031300081424, guid: 85a3b90dace79bb43bb8393089f8b88f, type: 3}
     - {fileID: 6073450814551408090, guid: 63fa25f429fba7c429a4cdecc292feaa, type: 3}
     - {fileID: 7870841727713951114, guid: 6f20548546af6c2418a90216d200b64d, type: 3}
-    targetCount: 1200
-    minSpacing: 4.5
+    targetCount: 3600
+    minSpacing: 2.5
     edgeDensity: 0.1
     densityFalloff: 1.5
     maxOtherBiomeInfluence: 0.5

@@ -1120,6 +1120,45 @@ public sealed class BuildingSpawner : MonoBehaviour
         SeatInstanceToPadSurface(t);
     }
 
+    /// <summary>Scale a faction building visual with the same Short/Tall rules as decorative towns.</summary>
+    public static void ApplyTownScale(GameObject instance, BuildingSizeClass size)
+    {
+        if (instance == null)
+            return;
+
+        BuildingSpawner spawner = Instance;
+        float targetHeight = size == BuildingSizeClass.Tall
+            ? (spawner != null ? spawner.tallTargetHeight : 32f)
+            : (spawner != null ? spawner.shortTargetHeight : 10f);
+        float maxFoot = size == BuildingSizeClass.Tall
+            ? (spawner != null ? spawner.tallMaxFootprint : 22f)
+            : (spawner != null ? spawner.shortMaxFootprint : 7f);
+        float minS = spawner != null ? spawner.minAutoScale : 0.15f;
+        float maxS = spawner != null ? spawner.maxAutoScale : 80f;
+        bool auto = spawner == null || spawner.autoScaleToTargetHeight;
+
+        Transform t = instance.transform;
+        if (!TryGetLocalBounds(instance, out Bounds localBounds) || localBounds.size.y < 1e-4f)
+        {
+            SeatInstanceToPadSurface(t);
+            return;
+        }
+
+        float s = 1f;
+        if (auto)
+        {
+            s = targetHeight / Mathf.Max(1e-4f, localBounds.size.y);
+            s = Mathf.Clamp(s, minS, maxS);
+            float foot = Mathf.Max(localBounds.size.x, localBounds.size.z) * s;
+            if (foot > maxFoot && foot > 1e-4f)
+                s *= maxFoot / foot;
+            s = Mathf.Clamp(s, minS, maxS);
+        }
+
+        t.localScale = Vector3.one * s;
+        SeatInstanceToPadSurface(t);
+    }
+
     /// <summary>
     /// Seat the instance so the lowest mesh point sits on the pad plane (local +Y = away from planet).
     /// Uses world-space mesh vertices so FBX pivots / nested scales cannot leave buildings floating.

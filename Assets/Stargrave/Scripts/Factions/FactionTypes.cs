@@ -21,7 +21,8 @@ public enum FactionResourceType
 public enum FactionNpcRole
 {
     ResourceGatherer,
-    Soldier
+    Soldier,
+    Merchant
 }
 
 [Serializable]
@@ -43,6 +44,7 @@ public sealed class FactionEconomySettings
     [Header("Starting economy")]
     [Min(0)] public int startingWood = 0;
     [Min(0)] public int startingStone = 0;
+    [Min(0)] public int startingGold = 40;
     [Tooltip("Starting workers.")]
     [Min(1)] public int startingWorkers = 6;
     [Min(1)] public int workerMaxCount = 12;
@@ -52,19 +54,48 @@ public sealed class FactionEconomySettings
     public FactionResourceCost townHallCost = new FactionResourceCost(40, 20);
     [Min(1f)] public float townHallBuildSeconds = 60f;
     [Min(1)] public int townHallMaxBuilders = 4;
-    [Min(1f)] public float townHallFlatRadius = 8f;
+    [Min(1f)] public float townHallFlatRadius = 12f;
     [Min(0.5f)] public float townHallBlendWidth = 12f;
 
     [Header("Barracks")]
     public FactionResourceCost barracksCost = new FactionResourceCost(50, 30);
     [Min(1f)] public float barracksBuildSeconds = 45f;
     [Min(1)] public int barracksMaxBuilders = 3;
-    [Min(1f)] public float barracksFlatRadius = 5f;
+    [Min(1f)] public float barracksFlatRadius = 4.5f;
     [Min(0.5f)] public float barracksBlendWidth = 8f;
     [Tooltip("Closest lot distance from Town Hall center (village ring).")]
     [Min(4f)] public float barracksMinDistance = 14f;
     [Tooltip("Farthest fallback lot if the inner ring is blocked.")]
     [Min(4f)] public float barracksMaxDistance = 22f;
+
+    [Header("Market")]
+    public FactionResourceCost marketCost = new FactionResourceCost(40, 25);
+    [Min(1f)] public float marketBuildSeconds = 40f;
+    [Min(1)] public int marketMaxBuilders = 3;
+    [Min(1f)] public float marketFlatRadius = 4.5f;
+    [Min(0.5f)] public float marketBlendWidth = 8f;
+    [Min(4f)] public float marketMinDistance = 16f;
+    [Min(4f)] public float marketMaxDistance = 26f;
+
+    [Header("Trade")]
+    [Min(0.1f)] public float woodGoldPrice = 2f;
+    [Min(0.1f)] public float stoneGoldPrice = 3f;
+    [Min(1)] public int tradeLotSize = 5;
+    [Min(0)] public int tradeReserveWood = 30;
+    [Min(0)] public int tradeReserveStone = 20;
+    [Range(0f, 1f)] public float tradeRelationStart = 0.15f;
+    [Range(0f, 1f)] public float tradeRelationGain = 0.08f;
+    [Range(0f, 1f)] public float attackRelationPenalty = 0.25f;
+    [Range(0f, 1f)] public float damageRelationPenalty = 0.02f;
+    [Range(0.01f, 1f)] public float attackChanceFloor = 0.08f;
+    [Range(0.5f, 2f)] public float priceGapInfluence = 0.35f;
+
+    [Header("Merchant production")]
+    public FactionResourceCost merchantCost = new FactionResourceCost(8, 4);
+    [Min(0)] public int merchantGoldCost = 5;
+    [Min(1f)] public float merchantTrainingSeconds = 15f;
+    [Min(1)] public int merchantMaxCount = 3;
+    [Min(1)] public int merchantCarryCapacity = 10;
 
     [Header("Soldier production")]
     public FactionResourceCost soldierCost = new FactionResourceCost(20, 10);
@@ -151,6 +182,7 @@ public sealed class FactionWarfareSettings
     [Min(0f)] public float workerStrength = 10f;
     [Min(0f)] public float townHallStrength = 200f;
     [Min(0f)] public float barracksStrength = 100f;
+    [Min(0f)] public float marketStrength = 80f;
     [Min(0f)] public float resourceStrengthPerUnit = 0.1f;
 }
 

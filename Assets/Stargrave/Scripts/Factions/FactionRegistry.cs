@@ -66,6 +66,7 @@ public static class FactionRegistry
         s_Npcs.Clear();
         s_Resources.Clear();
         s_WarfareEnabled = false;
+        FactionTradeSystem.Reset();
     }
 
     public static FactionNpc FindNearestNpc(Vector3 position, float radius, FactionController excludeFaction = null)
@@ -81,6 +82,8 @@ public static class FactionRegistry
                 continue;
             }
             if (excludeFaction != null && npc.Faction == excludeFaction)
+                continue;
+            if (!IsCombatTarget(npc, excludeFaction))
                 continue;
 
             float d = (npc.transform.position - position).sqrMagnitude;
@@ -106,6 +109,8 @@ public static class FactionRegistry
                 continue;
             }
             if (owner != null && npc.Faction == owner)
+                continue;
+            if (!IsCombatTarget(npc, owner))
                 continue;
             if ((npc.transform.position - position).sqrMagnitude <= radiusSq)
                 count++;
@@ -194,5 +199,14 @@ public static class FactionRegistry
             }
         }
         return best;
+    }
+
+    public static bool IsCombatTarget(FactionNpc npc, FactionController seeker)
+    {
+        if (npc == null || npc.IsDead)
+            return false;
+        if (npc.Role != FactionNpcRole.Merchant)
+            return true;
+        return FactionTradeSystem.AreFighting(seeker, npc.Faction);
     }
 }

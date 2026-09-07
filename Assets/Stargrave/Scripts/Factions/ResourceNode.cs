@@ -211,18 +211,18 @@ public sealed class FoliageResourceAdapter : MonoBehaviour
 
     void ScanExisting()
     {
-        if (_foliage == null || _sources.Count >= maximumRegisteredNodes)
+        if (_foliage == null)
             return;
         // FoliageByColour parents each pooled source directly under a Foliage_<rule> container.
         // Inspect only those shallow containers; walking every model bone would defeat the
         // bounded registration and can be very expensive on a large streamed planet.
         Transform foliageRoot = _foliage.transform;
-        for (int c = 0; c < foliageRoot.childCount && _sources.Count < maximumRegisteredNodes; c++)
+        for (int c = 0; c < foliageRoot.childCount; c++)
         {
             Transform container = foliageRoot.GetChild(c);
             if (container == null || container.name.IndexOf("Foliage_", System.StringComparison.OrdinalIgnoreCase) < 0)
                 continue;
-            for (int i = 0; i < container.childCount && _sources.Count < maximumRegisteredNodes; i++)
+            for (int i = 0; i < container.childCount; i++)
                 RegisterSource(container.GetChild(i).gameObject, container.name, container.GetChild(i));
         }
 
@@ -259,7 +259,7 @@ public sealed class FoliageResourceAdapter : MonoBehaviour
             return;
 
         Vector3 position = sourceTransform != null ? sourceTransform.position : source.transform.position;
-        if (_sources.Count >= maximumRegisteredNodes && !TryEvictLeastUsefulNode(position))
+        if (_sources.Count >= maximumRegisteredNodes && !TryEvictLeastUsefulNode(position, type))
             return;
 
         // The proxy is independent from the foliage object so camera culling does not make
@@ -273,9 +273,18 @@ public sealed class FoliageResourceAdapter : MonoBehaviour
         _sources.Add(source, node);
     }
 
-    bool TryEvictLeastUsefulNode(Vector3 incomingPosition)
+    bool TryEvictLeastUsefulNode(Vector3 incomingPosition, FactionResourceType incomingType)
     {
         float incomingFactionSq = NearestFactionDistanceSq(incomingPosition);
+        int stoneQuota = Mathf.Max(40, maximumRegisteredNodes / 8);
+        int stoneCount = 0;
+        foreach (var pair in _sources)
+        {
+            if (pair.Value != null && pair.Value.ResourceType == FactionResourceType.Stone)
+                stoneCount++;
+        }
+
+        bool needStoneSlots = incomingType == FactionResourceType.Stone && stoneCount < stoneQuota;
         GameObject worst = null;
         ResourceNode worstNode = null;
         float worstFactionSq = -1f;
@@ -283,7 +292,12 @@ public sealed class FoliageResourceAdapter : MonoBehaviour
         {
             if (pair.Key == null || pair.Value == null)
                 continue;
+            if (needStoneSlots && pair.Value.ResourceType == FactionResourceType.Stone)
+                continue;
+
             float d = NearestFactionDistanceSq(pair.Value.transform.position);
+            if (needStoneSlots && pair.Value.ResourceType == FactionResourceType.Wood)
+                d += 1e10f;
             if (d > worstFactionSq)
             {
                 worstFactionSq = d;
@@ -292,7 +306,9 @@ public sealed class FoliageResourceAdapter : MonoBehaviour
             }
         }
 
-        if (worst == null || worstFactionSq <= incomingFactionSq)
+        if (worst == null)
+            return false;
+        if (!needStoneSlots && worstFactionSq <= incomingFactionSq)
             return false;
         if (worstNode != null)
             Destroy(worstNode.gameObject);

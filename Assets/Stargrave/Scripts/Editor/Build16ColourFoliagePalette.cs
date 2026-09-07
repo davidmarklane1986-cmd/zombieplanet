@@ -238,10 +238,10 @@ public static class Build16ColourFoliagePalette
                 rules.Add(PooledRule($"Beach Palms #{hex}", col, palms, 900, 5.5f, new Vector2(4f, 6f), 30f));
                 return $"Beach Palms (pooled, {palms.Count} prefabs)";
             case ZoneKind.Rocks:
-                rules.Add(PooledRule($"Rocks #{hex}", col, rocks, 2500, 4f, new Vector2(1.5f, 3.5f), 90f));
+                rules.Add(PooledRule($"Rocks #{hex}", col, rocks, 7500, 2.2f, new Vector2(1.5f, 3.5f), 90f));
                 return $"Rocks (pooled, {rocks.Count} prefabs)";
             case ZoneKind.SnowRocks:
-                rules.Add(PooledRule($"Snow Rocks #{hex}", col, rocks, 1200, 4.5f, new Vector2(1.5f, 3.5f), 90f));
+                rules.Add(PooledRule($"Snow Rocks #{hex}", col, rocks, 3600, 2.5f, new Vector2(1.5f, 3.5f), 90f));
                 return $"Snow Rocks (pooled, {rocks.Count} prefabs)";
             case ZoneKind.SnowPines:
                 rules.Add(PooledRule($"Snow Pines #{hex}", col, pines, 5500, 2.4f, new Vector2(4f, 7f), 35f, 0.4f, 0.03f));

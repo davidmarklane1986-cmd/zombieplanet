@@ -11,9 +11,11 @@ public sealed class FactionController : MonoBehaviour
     readonly List<FactionNpc> _members = new List<FactionNpc>(64);
     readonly List<FactionNpc> _workers = new List<FactionNpc>(16);
     readonly List<FactionNpc> _soldiers = new List<FactionNpc>(48);
+    readonly List<FactionNpc> _merchants = new List<FactionNpc>(8);
     readonly List<Vector3> _streamFoci = new List<Vector3>(8);
     readonly List<float> _streamFocusUsed = new List<float>(8);
     readonly List<bool> _streamFocusHarvest = new List<bool>(8);
+    readonly List<FactionResourceType> _streamFocusType = new List<FactionResourceType>(8);
     readonly List<Vector3> _woodSites = new List<Vector3>(8);
     readonly List<float> _woodSiteUsed = new List<float>(8);
     readonly List<Vector3> _stoneSites = new List<Vector3>(8);
@@ -38,13 +40,17 @@ public sealed class FactionController : MonoBehaviour
     public FactionState State { get; private set; } = FactionState.Economy;
     public TownHall TownHall { get; private set; }
     public Barracks Barracks { get; private set; }
+    public Market Market { get; private set; }
     public BuildingConstructionSite ActiveConstruction { get; private set; }
     Vector3 _townHallAxis;
     Vector3 _barracksAxis;
+    Vector3 _marketAxis;
     bool _townHallBuiltOnce;
     bool _barracksBuiltOnce;
+    bool _marketBuiltOnce;
     public int Wood { get; private set; }
     public int Stone { get; private set; }
+    public int Gold { get; private set; }
     public int WoodGathered { get; private set; }
     public int StoneGathered { get; private set; }
     public int ReservedWood { get; private set; }
@@ -52,7 +58,10 @@ public sealed class FactionController : MonoBehaviour
     public int WorkerCount => CountLiving(_workers);
     public IReadOnlyList<FactionNpc> Workers => _workers;
     public int SoldierCount => CountLiving(_soldiers);
+    public int MerchantCount => CountLiving(_merchants);
     public IReadOnlyList<FactionNpc> Members => _members;
+    public int AvailableWood => Mathf.Max(0, Wood - ReservedWood);
+    public int AvailableStone => Mathf.Max(0, Stone - ReservedStone);
     public float Strength => CalculateStrength().total;
     public float GrowthModifier => _simulation != null ? _simulation.GetGrowthModifier(this) : 1f;
     public FactionController CurrentRival { get; private set; }
@@ -96,6 +105,7 @@ public sealed class FactionController : MonoBehaviour
         SpawnAxis = spawnAxis.sqrMagnitude > 1e-6f ? spawnAxis.normalized : Vector3.up;
         Wood = Mathf.Max(0, Economy.startingWood);
         Stone = Mathf.Max(0, Economy.startingStone);
+        Gold = Mathf.Max(0, Economy.startingGold);
         name = DisplayName;
         _stateMachine = gameObject.AddComponent<FactionStateMachine>();
         _stateMachine.Initialize(this);
@@ -180,7 +190,7 @@ public sealed class FactionController : MonoBehaviour
                 Debug.Log($"[FactionSimulation] {DisplayName} reached engagement strength.", this);
         }
 
-        if (State == FactionState.Economy && TownHall != null && Barracks == null)
+        if (State == FactionState.Economy && TownHall != null)
             State = FactionState.BuildingArmy;
 
         if ((State == FactionState.Economy || State == FactionState.BuildingArmy) && NeedsRecoup())
@@ -291,7 +301,8 @@ public sealed class FactionController : MonoBehaviour
                 return;
             }
             if (BuildingPlacementSystem.TryCreateNearTownHall(
-                    this, _simulation.barracksPrefab, Economy.barracksMinDistance,
+                    this, BuildingKind.Barracks, _simulation.barracksPrefab,
+                    Economy.barracksMinDistance,
                     Economy.barracksMaxDistance, Economy.barracksFlatRadius,
                     Economy.barracksBlendWidth, Economy.barracksCost,
                     Economy.barracksBuildSeconds, Economy.barracksMaxBuilders,
@@ -302,6 +313,34 @@ public sealed class FactionController : MonoBehaviour
             else if (_simulation.verboseEvents && Time.frameCount % 120 == 0)
             {
                 Debug.LogWarning($"[FactionSimulation] {DisplayName} could not place Barracks beside Town Hall.", this);
+            }
+        }
+        else if (Market == null)
+        {
+            BuildingConstructionSite site;
+            if (_marketBuiltOnce &&
+                BuildingPlacementSystem.TryCreateConstructionSite(
+                    this, BuildingKind.Market, _simulation.marketPrefab,
+                    _marketAxis, Economy.marketFlatRadius, Economy.marketBlendWidth,
+                    Economy.marketCost, Economy.marketBuildSeconds, Economy.marketMaxBuilders,
+                    out site, 1, 0f, true, true))
+            {
+                BeginConstruction(site);
+                return;
+            }
+            if (BuildingPlacementSystem.TryCreateNearTownHall(
+                    this, BuildingKind.Market, _simulation.marketPrefab,
+                    Economy.marketMinDistance,
+                    Economy.marketMaxDistance, Economy.marketFlatRadius,
+                    Economy.marketBlendWidth, Economy.marketCost,
+                    Economy.marketBuildSeconds, Economy.marketMaxBuilders,
+                    out site))
+            {
+                BeginConstruction(site);
+            }
+            else if (_simulation.verboseEvents && Time.frameCount % 120 == 0)
+            {
+                Debug.LogWarning($"[FactionSimulation] {DisplayName} could not place Market beside Town Hall.", this);
             }
         }
     }
@@ -415,6 +454,99 @@ public sealed class FactionController : MonoBehaviour
             Stone += amount;
     }
 
+    public void AddGold(int amount)
+    {
+        if (amount > 0)
+            Gold += amount;
+    }
+
+    public bool TrySpendGold(int amount)
+    {
+        if (amount <= 0)
+            return true;
+        if (Gold < amount)
+            return false;
+        Gold -= amount;
+        return true;
+    }
+
+    public int GetAvailable(FactionResourceType type)
+    {
+        return type == FactionResourceType.Wood ? AvailableWood : AvailableStone;
+    }
+
+    public bool TryWithdrawResource(FactionResourceType type, int amount, out int taken)
+    {
+        taken = 0;
+        if (amount <= 0)
+            return false;
+        int available = GetAvailable(type);
+        taken = Mathf.Min(amount, available);
+        if (taken <= 0)
+            return false;
+        if (type == FactionResourceType.Wood)
+            Wood -= taken;
+        else
+            Stone -= taken;
+        return true;
+    }
+
+    public int TradeSurplus(FactionResourceType type)
+    {
+        return TradeableAmount(type);
+    }
+
+    public int TradeableAmount(FactionResourceType type)
+    {
+        int available = GetAvailable(type);
+        BuildingConstructionSite site = ActiveConstruction;
+        if (site != null && !site.IsComplete)
+        {
+            int owed = type == FactionResourceType.Wood
+                ? Mathf.Max(0, site.Cost.wood - site.DeliveredWood)
+                : Mathf.Max(0, site.Cost.stone - site.DeliveredStone);
+            available -= owed;
+        }
+        return Mathf.Max(0, available);
+    }
+
+    public int TradeNeed(FactionResourceType type)
+    {
+        int available = GetAvailable(type);
+        int reserve = type == FactionResourceType.Wood
+            ? Economy.tradeReserveWood
+            : Economy.tradeReserveStone;
+        int gap = StockGap(type);
+        return Mathf.Max(gap, Mathf.Max(0, reserve - available));
+    }
+
+    public bool WantsMerchantTrade()
+    {
+        if (Market == null || !Market.IsOperational)
+            return false;
+        return TradeSurplus(FactionResourceType.Wood) > 0 ||
+               TradeSurplus(FactionResourceType.Stone) > 0 ||
+               TradeNeed(FactionResourceType.Wood) > 0 ||
+               TradeNeed(FactionResourceType.Stone) > 0;
+    }
+
+    public bool TrySpendMerchantTraining()
+    {
+        if (!HasResources(Economy.merchantCost) || Gold < Economy.merchantGoldCost)
+            return false;
+        if (!TrySpendAvailableCost(Economy.merchantCost))
+            return false;
+        Gold -= Mathf.Max(0, Economy.merchantGoldCost);
+        return true;
+    }
+
+    public bool IsAtWarWith(FactionController other)
+    {
+        return other != null &&
+               CurrentRival == other &&
+               (State == FactionState.Attacking || State == FactionState.Fighting);
+    }
+
     public void FeedConstructionFromStock(BuildingConstructionSite site = null)
     {
         if (site == null)
@@ -462,6 +594,8 @@ public sealed class FactionController : MonoBehaviour
         _members.Add(npc);
         if (npc.Role == FactionNpcRole.ResourceGatherer)
             _workers.Add(npc);
+        else if (npc.Role == FactionNpcRole.Merchant)
+            _merchants.Add(npc);
         else
             _soldiers.Add(npc);
     }
@@ -471,6 +605,7 @@ public sealed class FactionController : MonoBehaviour
         _members.Remove(npc);
         _workers.Remove(npc);
         _soldiers.Remove(npc);
+        _merchants.Remove(npc);
     }
 
     public void NotifyBuildingCompleted(Building building)
@@ -488,6 +623,12 @@ public sealed class FactionController : MonoBehaviour
             Barracks = building as Barracks;
             _barracksBuiltOnce = true;
             _barracksAxis = AxisFromBuilding(building);
+        }
+        else if (building.Kind == BuildingKind.Market)
+        {
+            Market = building as Market;
+            _marketBuiltOnce = true;
+            _marketAxis = AxisFromBuilding(building);
         }
 
         if (ActiveConstruction != null && ActiveConstruction.Building == building)
@@ -511,6 +652,8 @@ public sealed class FactionController : MonoBehaviour
             TownHall = null;
         if (Barracks == building)
             Barracks = null;
+        if (Market == building)
+            Market = null;
         if (_simulation.verboseEvents)
             Debug.Log($"[FactionSimulation] {DisplayName} lost {building.Kind}; rebuilding is enabled.", this);
         if (State != FactionState.Retreating)
@@ -526,6 +669,8 @@ public sealed class FactionController : MonoBehaviour
     public void BeginAttack(FactionController rival)
     {
         CurrentRival = rival;
+        if (rival != null)
+            FactionTradeSystem.NotifyAttackDeclared(this, rival);
         if (rival != null && (rival.CurrentRival == null || rival.CurrentRival == this))
             rival.BindRival(this);
         PreviousAttackStrength = SoldierCount * Warfare.soldierStrength;
@@ -774,6 +919,12 @@ public sealed class FactionController : MonoBehaviour
         }
 
         worker.Worker.AcceptGatherTask(task);
+        if (task == FactionResourceType.Stone &&
+            _simulation != null &&
+            _simulation.TryGetNearestProspect(task, GetSafePosition(), out Vector3 prospect))
+        {
+            RememberStreamFocus(prospect, true, FactionResourceType.Stone);
+        }
     }
 
     int StockGap(FactionResourceType type)
@@ -1014,7 +1165,7 @@ public sealed class FactionController : MonoBehaviour
     /// Pins a discovered or scouted location so foliage keeps streaming there for this faction.
     /// Harvest finds are kept over random wander points when the list is full.
     /// </summary>
-    public void RememberStreamFocus(Vector3 position, bool harvest)
+    public void RememberStreamFocus(Vector3 position, bool harvest, FactionResourceType resourceType)
     {
         float mergeSq = StreamFocusMergeDistance * StreamFocusMergeDistance;
         int existing = -1;
@@ -1034,51 +1185,76 @@ public sealed class FactionController : MonoBehaviour
                 _streamFoci[existing] = position;
                 _streamFocusHarvest[existing] = true;
             }
+            _streamFocusType[existing] = resourceType;
             _streamFocusUsed[existing] = Time.time;
             return;
         }
 
         if (_streamFoci.Count >= MaxStreamFoci)
         {
-            int evict = FindStreamFocusToEvict(harvest);
+            int evict = FindStreamFocusToEvict(harvest, resourceType);
             if (evict < 0)
                 return;
             _streamFoci[evict] = position;
             _streamFocusUsed[evict] = Time.time;
             _streamFocusHarvest[evict] = harvest;
+            _streamFocusType[evict] = resourceType;
             return;
         }
 
         _streamFoci.Add(position);
         _streamFocusUsed.Add(Time.time);
         _streamFocusHarvest.Add(harvest);
+        _streamFocusType.Add(resourceType);
     }
 
-    int FindStreamFocusToEvict(bool incomingHarvest)
+    int FindStreamFocusToEvict(bool incomingHarvest, FactionResourceType incomingType)
     {
-        int bestScout = -1;
-        float oldestScout = float.PositiveInfinity;
-        int bestAny = -1;
-        float oldestAny = float.PositiveInfinity;
+        int stoneCount = 0;
+        for (int i = 0; i < _streamFocusType.Count; i++)
+        {
+            if (_streamFocusType[i] == FactionResourceType.Stone)
+                stoneCount++;
+        }
+
+        int bestScoutSame = -1;
+        float oldestScoutSame = float.PositiveInfinity;
+        int bestSame = -1;
+        float oldestSame = float.PositiveInfinity;
+        int bestWoodHarvest = -1;
+        float oldestWoodHarvest = float.PositiveInfinity;
         for (int i = 0; i < _streamFoci.Count; i++)
         {
-            if (_streamFocusUsed[i] < oldestAny)
+            bool same = i < _streamFocusType.Count && _streamFocusType[i] == incomingType;
+            if (same && !_streamFocusHarvest[i] && _streamFocusUsed[i] < oldestScoutSame)
             {
-                oldestAny = _streamFocusUsed[i];
-                bestAny = i;
+                oldestScoutSame = _streamFocusUsed[i];
+                bestScoutSame = i;
             }
-            if (_streamFocusHarvest[i])
-                continue;
-            if (_streamFocusUsed[i] < oldestScout)
+            if (same && _streamFocusUsed[i] < oldestSame)
             {
-                oldestScout = _streamFocusUsed[i];
-                bestScout = i;
+                oldestSame = _streamFocusUsed[i];
+                bestSame = i;
+            }
+            if (!same &&
+                _streamFocusType[i] == FactionResourceType.Wood &&
+                _streamFocusHarvest[i] &&
+                _streamFocusUsed[i] < oldestWoodHarvest)
+            {
+                oldestWoodHarvest = _streamFocusUsed[i];
+                bestWoodHarvest = i;
             }
         }
 
-        if (bestScout >= 0)
-            return bestScout;
-        return incomingHarvest ? bestAny : -1;
+        if (bestScoutSame >= 0)
+            return bestScoutSame;
+        if (incomingHarvest && bestSame >= 0)
+            return bestSame;
+        if (incomingType == FactionResourceType.Stone && bestWoodHarvest >= 0)
+            return bestWoodHarvest;
+        if (incomingType == FactionResourceType.Wood && stoneCount <= 1)
+            return -1;
+        return incomingHarvest ? bestSame : -1;
     }
 
     public FactionStrengthBreakdown CalculateStrength()
@@ -1096,8 +1272,9 @@ public sealed class FactionController : MonoBehaviour
         }
         result.workerContribution = result.livingWorkers * Warfare.workerStrength;
         result.buildingContribution = (TownHall != null ? Warfare.townHallStrength : 0f) +
-                                      (Barracks != null ? Warfare.barracksStrength : 0f);
-        result.resourceContribution = (Wood + Stone) * Warfare.resourceStrengthPerUnit;
+                                      (Barracks != null ? Warfare.barracksStrength : 0f) +
+                                      (Market != null ? Warfare.marketStrength : 0f);
+        result.resourceContribution = (Wood + Stone + Gold) * Warfare.resourceStrengthPerUnit;
         result.total = result.soldierContribution + result.workerContribution +
                        result.buildingContribution + result.resourceContribution;
         return result;
@@ -1144,7 +1321,14 @@ public sealed class FactionController : MonoBehaviour
 
         EnsureMusterPlan(false);
         rival = FindWillingRivalByDistance();
-        return rival != null;
+        if (rival == null)
+            return false;
+        if (!FactionTradeSystem.ShouldLaunchDespiteTrade(this, rival))
+        {
+            rival = null;
+            return false;
+        }
+        return true;
     }
 
     public bool WouldAcceptFight(FactionController challenger)
