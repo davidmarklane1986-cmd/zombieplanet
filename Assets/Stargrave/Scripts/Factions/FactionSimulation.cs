@@ -565,7 +565,9 @@ public sealed class FactionSimulation : MonoBehaviour
         if (_bothReachedEngagement || _factions.Count < 2)
             return;
 
-        int need = warfare.minimumSoldiersForWar > 0 ? warfare.minimumSoldiersForWar : 10;
+        int need = warfare.minSoldiersToPropose > 0
+            ? warfare.minSoldiersToPropose
+            : (warfare.minimumSoldiersForWar > 0 ? warfare.minimumSoldiersForWar : 6);
         int ready = 0;
         for (int i = 0; i < _factions.Count; i++)
         {

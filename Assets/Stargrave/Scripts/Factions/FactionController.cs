@@ -69,6 +69,10 @@ public sealed class FactionController : MonoBehaviour
     float _nextAttackAllowed;
     Vector3 _hostileContact;
     float _hostileContactTime;
+    int _plannedMuster;
+    float _musterStartedAt;
+    int _failedWaves;
+    int _approachWave;
 
     public FactionEconomySettings Economy => _simulation.economy;
     public FactionCombatSettings Combat => _simulation.combat;
@@ -184,9 +188,14 @@ public sealed class FactionController : MonoBehaviour
 
         if (State == FactionState.BuildingArmy && Barracks != null)
         {
+            if (_plannedMuster <= 0)
+                EnsureMusterPlan(true);
             if (FactionRegistry.WarfareEnabled && ShouldLaunchAttack(out FactionController rival))
                 BeginAttack(rival);
         }
+
+        if (State == FactionState.Attacking || State == FactionState.Fighting)
+            TickAttackRetarget();
 
         if ((State == FactionState.Attacking || State == FactionState.Fighting) &&
             PreviousAttackSoldiers > 0 &&
@@ -210,12 +219,13 @@ public sealed class FactionController : MonoBehaviour
                 BeginRecovery();
         }
 
-        if (State == FactionState.Recovering && CanEndRecovery() && OpposingCanEndRecovery())
+        if (State == FactionState.Recovering && CanEndRecovery())
         {
             ClearRivalIfPaired();
             PreviousAttackStrength = 0f;
             PreviousAttackSoldiers = 0;
             State = FactionState.BuildingArmy;
+            EnsureMusterPlan(true);
         }
 
         if (ActiveConstruction == null)
@@ -520,9 +530,14 @@ public sealed class FactionController : MonoBehaviour
             rival.BindRival(this);
         PreviousAttackStrength = SoldierCount * Warfare.soldierStrength;
         PreviousAttackSoldiers = SoldierCount;
+        _approachWave++;
+        _plannedMuster = 0;
         State = FactionState.Attacking;
         if (_simulation.verboseEvents)
-            Debug.Log($"[FactionSimulation] {DisplayName} attack started on {(rival != null ? rival.DisplayName : "none")} with {PreviousAttackSoldiers} soldiers.", this);
+            Debug.Log(
+                $"[FactionSimulation] {DisplayName} attack started on {(rival != null ? rival.DisplayName : "none")} " +
+                $"with {PreviousAttackSoldiers} soldiers (approach {_approachWave}).",
+                this);
     }
 
     public void BindRival(FactionController rival)
@@ -537,13 +552,10 @@ public sealed class FactionController : MonoBehaviour
         State = FactionState.Retreating;
         ClearDefense();
         ClearBackup();
+        _failedWaves++;
         _nextAttackAllowed = Time.time + Warfare.attackReplanSeconds;
         if (_simulation.verboseEvents)
             Debug.Log($"[FactionSimulation] {DisplayName} retreat started.", this);
-
-        FactionController opposing = CurrentRival;
-        if (opposing != null && opposing.CurrentRival == this && opposing.State != FactionState.Retreating)
-            opposing.BeginRetreat();
     }
 
     public void BeginRecovery()
@@ -554,16 +566,9 @@ public sealed class FactionController : MonoBehaviour
         ClearDefense();
         ClearBackup();
         _nextAttackAllowed = Mathf.Max(_nextAttackAllowed, Time.time + Warfare.attackReplanSeconds);
+        ClearRivalIfPaired();
         if (_simulation.verboseEvents)
             Debug.Log($"[FactionSimulation] {DisplayName} recovery started.", this);
-
-        FactionController opposing = CurrentRival;
-        if (opposing != null &&
-            opposing.CurrentRival == this &&
-            (opposing.State == FactionState.Attacking ||
-             opposing.State == FactionState.Fighting ||
-             opposing.State == FactionState.BuildingArmy))
-            opposing.BeginRecovery();
     }
 
     public bool NeedsRecoup()
@@ -687,11 +692,14 @@ public sealed class FactionController : MonoBehaviour
             return true;
         }
 
-        destination = JitterOnSurface(GetAssaultApproachPoint(), 6f, Mathf.Max(10f, Combat.attackFormationRadius));
+        destination = JitterOnSurface(
+            GetAssaultApproachPoint(soldier),
+            6f,
+            Mathf.Max(10f, Combat.attackFormationRadius));
         return true;
     }
 
-    Vector3 GetAssaultApproachPoint()
+    Vector3 GetAssaultApproachPoint(FactionNpc soldier)
     {
         Vector3 home = GetSafePosition();
         FactionController opposing = FactionRegistry.FindOpposingFaction(this);
@@ -700,10 +708,24 @@ public sealed class FactionController : MonoBehaviour
 
         Vector3 enemy = opposing.GetSafePosition();
         Vector3 toEnemy = enemy - home;
-        float range = Combat.soldierPatrolRadius > 0f ? Combat.soldierPatrolRadius : 32f;
         if (toEnemy.sqrMagnitude < 1e-4f)
             return home;
-        Vector3 offset = toEnemy.normalized * range;
+
+        Vector3 forward = toEnemy.normalized;
+        Vector3 up = home.sqrMagnitude > 1e-4f ? home.normalized : Vector3.up;
+        Vector3 right = Vector3.Cross(up, forward);
+        if (right.sqrMagnitude < 1e-6f)
+            right = Vector3.Cross(Vector3.up, forward);
+        right.Normalize();
+
+        int wave = Mathf.Max(0, _approachWave);
+        bool scout = IsScoutSoldier(soldier);
+        float sign = ((wave + (scout ? 1 : 0)) & 1) == 0 ? -1f : 1f;
+        float width = Warfare.approachFlankDistance * (1f + (wave % 3) * 0.45f);
+        if (scout)
+            width *= 1.25f;
+        float range = Combat.soldierPatrolRadius > 0f ? Combat.soldierPatrolRadius : 32f;
+        Vector3 offset = forward * range + right * (sign * width);
         return OffsetOnSurface(home, offset);
     }
 
@@ -1091,6 +1113,25 @@ public sealed class FactionController : MonoBehaviour
         return FindNearestLiving(_soldiers, position);
     }
 
+    void TickAttackRetarget()
+    {
+        if (IsActiveCombatant(CurrentRival))
+            return;
+
+        if (ShouldLaunchAttack(out FactionController next))
+        {
+            if (_failedWaves > 0)
+                _failedWaves--;
+            BeginAttack(next);
+            return;
+        }
+
+        State = FactionState.BuildingArmy;
+        EnsureMusterPlan(true);
+        if (_simulation.verboseEvents)
+            Debug.Log($"[FactionSimulation] {DisplayName} held to remuster after rival dropped out.", this);
+    }
+
     bool ShouldLaunchAttack(out FactionController rival)
     {
         rival = null;
@@ -1098,56 +1139,129 @@ public sealed class FactionController : MonoBehaviour
             return false;
         if (Time.time < _nextAttackAllowed)
             return false;
-
-        int need = Warfare.minimumSoldiersForWar > 0 ? Warfare.minimumSoldiersForWar : 10;
-        if (SoldierCount < need)
+        if (SoldierCount < MinSoldiersToPropose)
             return false;
 
-        if (IsReadyRival(CurrentRival, need))
-            rival = CurrentRival;
-        else
-            rival = FindNearestReadyRival(need);
-
-        if (rival == null)
-            return false;
-        if (GrowthModifier < 0.8f && Strength > rival.Strength * 1.25f)
-            return false;
-        return Strength >= rival.Strength * 0.8f;
+        EnsureMusterPlan(false);
+        rival = FindWillingRivalByDistance();
+        return rival != null;
     }
 
-    bool IsReadyRival(FactionController opposing, int need)
+    public bool WouldAcceptFight(FactionController challenger)
     {
-        if (opposing == null || opposing == this)
+        if (challenger == null || challenger == this)
             return false;
-        if (opposing.State == FactionState.Retreating || opposing.State == FactionState.Recovering)
+        if (State == FactionState.Retreating || State == FactionState.Recovering)
             return false;
-        if (opposing.SoldierCount < need)
+        if (TownHall == null || !TownHall.IsOperational)
             return false;
-        if (opposing.CurrentRival != null && opposing.CurrentRival != this)
+        if (Barracks == null)
+            return false;
+        if (SoldierCount < MinSoldiersToAccept)
+            return false;
+        if (CurrentRival != null && CurrentRival != challenger && IsActiveCombatant(CurrentRival))
+            return false;
+        if ((State == FactionState.Attacking || State == FactionState.Fighting) &&
+            CurrentRival != null &&
+            CurrentRival != challenger)
             return false;
         return true;
     }
 
-    FactionController FindNearestReadyRival(int need)
+    FactionController FindWillingRivalByDistance()
     {
         Vector3 home = GetSafePosition();
-        FactionController best = null;
-        float bestSq = float.PositiveInfinity;
         IReadOnlyList<FactionController> factions = FactionRegistry.Factions;
-        for (int i = 0; i < factions.Count; i++)
+        float lastSq = -1f;
+        int lastIndex = -1;
+        int remaining = factions.Count;
+        for (int n = 0; n < remaining; n++)
         {
-            FactionController candidate = factions[i];
-            if (!IsReadyRival(candidate, need))
-                continue;
-            float d = (candidate.GetSafePosition() - home).sqrMagnitude;
-            if (d < bestSq)
+            FactionController best = null;
+            float bestSq = float.PositiveInfinity;
+            int bestIndex = int.MaxValue;
+            for (int i = 0; i < factions.Count; i++)
             {
-                bestSq = d;
-                best = candidate;
+                FactionController candidate = factions[i];
+                if (candidate == null || candidate == this)
+                    continue;
+                float d = (candidate.GetSafePosition() - home).sqrMagnitude;
+                bool afterLast = d > lastSq + 0.01f ||
+                                 (Mathf.Abs(d - lastSq) <= 0.01f && i > lastIndex);
+                if (!afterLast)
+                    continue;
+                if (d < bestSq - 0.01f || (Mathf.Abs(d - bestSq) <= 0.01f && i < bestIndex))
+                {
+                    best = candidate;
+                    bestSq = d;
+                    bestIndex = i;
+                }
             }
+
+            if (best == null)
+                return null;
+            lastSq = bestSq;
+            lastIndex = bestIndex;
+            if (best.WouldAcceptFight(this) && WillingToEngage(best))
+                return best;
         }
-        return best;
+
+        return null;
     }
+
+    bool WillingToEngage(FactionController rival)
+    {
+        if (rival == null)
+            return false;
+        if (GrowthModifier < 0.8f && Strength > rival.Strength * 1.25f)
+            return false;
+
+        int ours = SoldierCount;
+        int theirs = Mathf.Max(1, rival.SoldierCount);
+        float ratio = ours / (float)theirs;
+        bool mustered = ours >= _plannedMuster;
+        bool waited = Time.time - _musterStartedAt >= Mathf.Max(1f, Warfare.musterPatienceSeconds);
+        float needRatio = Warfare.attackIfOutnumberedFraction > 0f
+            ? Warfare.attackIfOutnumberedFraction
+            : 0.7f;
+        bool notSuicide = ratio >= needRatio || (mustered && ratio >= needRatio * 0.75f);
+        if (!notSuicide)
+            return false;
+        if (mustered)
+            return true;
+        if (waited && ours >= MinSoldiersToPropose)
+            return true;
+        return ours >= theirs && ours >= MinSoldiersToPropose;
+    }
+
+    void EnsureMusterPlan(bool reset)
+    {
+        if (!reset && _plannedMuster > 0)
+            return;
+
+        int prefer = Warfare.minimumSoldiersForWar > 0 ? Warfare.minimumSoldiersForWar : 10;
+        int extra = _failedWaves * Mathf.Max(0, Warfare.extraSoldiersAfterDefeat);
+        int spice = Mathf.Abs(RuntimeIndex * 2 + _failedWaves + _approachWave) % 3;
+        int min = MinSoldiersToPropose;
+        int max = Mathf.Max(min, Warfare.maxMusterWaitSoldiers > 0 ? Warfare.maxMusterWaitSoldiers : prefer + 6);
+        _plannedMuster = Mathf.Clamp(prefer + extra + spice, min, max);
+        _musterStartedAt = Time.time;
+    }
+
+    static bool IsActiveCombatant(FactionController faction)
+    {
+        if (faction == null)
+            return false;
+        if (faction.State == FactionState.Retreating || faction.State == FactionState.Recovering)
+            return false;
+        return faction.TownHall != null && faction.TownHall.IsOperational;
+    }
+
+    int MinSoldiersToPropose =>
+        Mathf.Max(1, Warfare.minSoldiersToPropose > 0 ? Warfare.minSoldiersToPropose : 6);
+
+    int MinSoldiersToAccept =>
+        Mathf.Max(1, Warfare.minSoldiersToAcceptFight > 0 ? Warfare.minSoldiersToAcceptFight : 5);
 
     void ClearRivalIfPaired()
     {
@@ -1155,18 +1269,6 @@ public sealed class FactionController : MonoBehaviour
         CurrentRival = null;
         if (rival != null && rival.CurrentRival == this)
             rival.BindRival(null);
-    }
-
-    bool OpposingCanEndRecovery()
-    {
-        FactionController opposing = CurrentRival;
-        if (opposing == null)
-            return true;
-        if (opposing.State == FactionState.Retreating)
-            return false;
-        if (opposing.State == FactionState.Recovering)
-            return opposing.CanEndRecovery();
-        return true;
     }
 
     static FactionNpc FindNearestLiving(List<FactionNpc> list, Vector3 position)

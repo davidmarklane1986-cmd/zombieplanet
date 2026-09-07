@@ -126,7 +126,18 @@ public sealed class FactionCombatSettings
 public sealed class FactionWarfareSettings
 {
     [Header("Engagement")]
+    [Tooltip("Preferred first-wave size. Attacks may fire below or above this.")]
     [Min(1)] public int minimumSoldiersForWar = 10;
+    [Tooltip("Fewest soldiers a faction will send when proposing a fight.")]
+    [Min(1)] public int minSoldiersToPropose = 6;
+    [Tooltip("Fewest soldiers a faction needs before it will accept a fight.")]
+    [Min(1)] public int minSoldiersToAcceptFight = 5;
+    [Tooltip("Upper cap when waiting for extra troops after a failed wave.")]
+    [Min(1)] public int maxMusterWaitSoldiers = 16;
+    [Min(0)] public int extraSoldiersAfterDefeat = 3;
+    [Min(1f)] public float musterPatienceSeconds = 18f;
+    [Range(0.4f, 1f)] public float attackIfOutnumberedFraction = 0.7f;
+    [Min(1f)] public float approachFlankDistance = 22f;
     [Min(1f)] public float minimumEngagementStrength = 500f;
     [Range(0f, 1f)] public float strengthBalanceBuffer = 0.2f;
     [Range(0f, 1f)] public float maximumStrongFactionSlowdown = 0.5f;
