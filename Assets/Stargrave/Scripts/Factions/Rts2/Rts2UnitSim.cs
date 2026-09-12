@@ -46,8 +46,11 @@ namespace Stargrave.Rts2
         [Min(1)] public int infantryDamage = 12;
         [Min(1)] public int archerDamage = 22;
         [Min(0.05f)] public float attackCooldown = 1f;
-        [Tooltip("Near-camera playable models. Off by default — Instantiates hitch.")]
-        public bool enableNearCharacterVisuals = false;
+        [Tooltip("Near-camera playable models + idle/run. Medium budget (~70 within ~80m).")]
+        public bool enableNearCharacterVisuals = true;
+        [Tooltip("GPU billboard cards for units without a skinned model (mid/far LOD).")]
+        public bool enableUnitCardLod = true;
+        [Min(40f)] public float unitCardMaxDistance = 280f;
         [Tooltip("Scene View only: coloured dots for all units while playing.")]
         public bool sceneViewUnitDots = true;
         [Tooltip("When Scene dots are on, only draw combat units (raiders/heavies).")]
@@ -71,6 +74,9 @@ namespace Stargrave.Rts2
         Vector3 _planetCenter;
         Mesh _mesh;
         Material _mat;
+        Texture2D _cardTex;
+        readonly Texture2D[] _cardByRole = new Texture2D[5];
+        bool _roleCardsReady;
         PlayerHealth _cachedPlayerHealth;
         float _playerHealthCacheUntil;
         readonly Matrix4x4[] _batch = new Matrix4x4[InstanceBatch];
@@ -130,6 +136,15 @@ namespace Stargrave.Rts2
             }
             if (_mat != null)
                 Destroy(_mat);
+            if (_cardTex != null)
+                Destroy(_cardTex);
+            for (int i = 0; i < _cardByRole.Length; i++)
+            {
+                if (_cardByRole[i] != null)
+                    Destroy(_cardByRole[i]);
+                _cardByRole[i] = null;
+            }
+            _roleCardsReady = false;
         }
 
         void CachePlanet()
@@ -146,18 +161,168 @@ namespace Stargrave.Rts2
 
         void EnsureRenderAssets()
         {
+            // Mid/far LOD: humanoid silhouette billboards (alpha cutout), faction-tinted.
             if (_mesh == null)
             {
-                var tmp = GameObject.CreatePrimitive(PrimitiveType.Capsule);
+                var tmp = GameObject.CreatePrimitive(PrimitiveType.Quad);
                 _mesh = tmp.GetComponent<MeshFilter>().sharedMesh;
                 Destroy(tmp);
             }
+            if (_cardTex == null)
+                _cardTex = BuildUnitCardSilhouetteTexture();
             if (_mat == null)
             {
-                Shader shader = Shader.Find("Universal Render Pipeline/Lit") ?? Shader.Find("Standard");
+                Shader shader = Shader.Find("Universal Render Pipeline/Unlit")
+                    ?? Shader.Find("Unlit/Transparent Cutout")
+                    ?? Shader.Find("Unlit/Color")
+                    ?? Shader.Find("Sprites/Default");
                 _mat = new Material(shader != null ? shader : Shader.Find("Sprites/Default"));
+                _mat.name = "Rts2UnitCardCutout";
                 _mat.enableInstancing = true;
+                if (_mat.HasProperty("_Surface"))
+                    _mat.SetFloat("_Surface", 0f);
+                if (_mat.HasProperty("_AlphaClip"))
+                    _mat.SetFloat("_AlphaClip", 1f);
+                if (_mat.HasProperty("_Cutoff"))
+                    _mat.SetFloat("_Cutoff", 0.35f);
+                if (_mat.HasProperty("_ZWrite"))
+                    _mat.SetFloat("_ZWrite", 1f);
+                if (_mat.HasProperty("_Cull"))
+                    _mat.SetFloat("_Cull", (float)CullMode.Off);
+                _mat.SetOverrideTag("RenderType", "TransparentCutout");
+                _mat.renderQueue = (int)RenderQueue.AlphaTest;
+                _mat.EnableKeyword("_ALPHATEST_ON");
             }
+            if (_cardTex != null && _mat != null)
+            {
+                if (_mat.HasProperty("_BaseMap"))
+                    _mat.SetTexture("_BaseMap", _cardTex);
+                if (_mat.HasProperty("_MainTex"))
+                    _mat.SetTexture("_MainTex", _cardTex);
+            }
+            EnsureBakedRoleCards();
+        }
+
+        void EnsureBakedRoleCards()
+        {
+            if (_roleCardsReady || _factionSim == null)
+                return;
+            _roleCardsReady = true; // one attempt per session even if some fail
+
+            BakeRoleCard(Rts2Role.Worker);
+            BakeRoleCard(Rts2Role.Infantry);
+            BakeRoleCard(Rts2Role.Archer);
+            BakeRoleCard(Rts2Role.Noble);
+            BakeRoleCard(Rts2Role.Merchant);
+        }
+
+        void BakeRoleCard(Rts2Role role)
+        {
+            int idx = (int)role;
+            if (idx < 0 || idx >= _cardByRole.Length || _cardByRole[idx] != null)
+                return;
+            GameObject prefab = _factionSim != null ? _factionSim.GetUnitPrefab(role) : null;
+            if (prefab == null)
+                return;
+            Texture2D baked = Rts2UnitCardBaker.BakeSideCard(prefab, role.ToString());
+            if (baked != null)
+                _cardByRole[idx] = baked;
+        }
+
+        Texture2D CardTextureForRole(Rts2Role role)
+        {
+            int idx = (int)role;
+            if (idx >= 0 && idx < _cardByRole.Length && _cardByRole[idx] != null)
+                return _cardByRole[idx];
+            return _cardTex;
+        }
+
+        void BindCardTexture(Texture2D tex)
+        {
+            if (_mat == null || tex == null)
+                return;
+            if (_mat.HasProperty("_BaseMap"))
+                _mat.SetTexture("_BaseMap", tex);
+            if (_mat.HasProperty("_MainTex"))
+                _mat.SetTexture("_MainTex", tex);
+        }
+
+        /// <summary>
+        /// White humanoid side silhouette on transparent — multiplied by faction colour at draw time.
+        /// </summary>
+        static Texture2D BuildUnitCardSilhouetteTexture()
+        {
+            const int w = 64;
+            const int h = 128;
+            var tex = new Texture2D(w, h, TextureFormat.RGBA32, mipChain: true)
+            {
+                name = "Rts2UnitCardSilhouette",
+                filterMode = FilterMode.Bilinear,
+                wrapMode = TextureWrapMode.Clamp,
+                alphaIsTransparency = true
+            };
+
+            var pixels = new Color32[w * h];
+            for (int i = 0; i < pixels.Length; i++)
+                pixels[i] = new Color32(0, 0, 0, 0);
+
+            // Side-view person: head, torso, arms, legs (white RGB so faction tint works).
+            FillEllipse(pixels, w, h, w * 0.50f, h * 0.86f, w * 0.16f, h * 0.10f); // head
+            FillRect(pixels, w, h, w * 0.44f, h * 0.74f, w * 0.12f, h * 0.06f); // neck
+            FillRoundedTorso(pixels, w, h, w * 0.50f, h * 0.52f, w * 0.28f, h * 0.22f); // torso
+            // Arms
+            FillRect(pixels, w, h, w * 0.18f, h * 0.48f, w * 0.12f, h * 0.28f);
+            FillRect(pixels, w, h, w * 0.70f, h * 0.48f, w * 0.12f, h * 0.28f);
+            // Legs
+            FillRect(pixels, w, h, w * 0.34f, h * 0.06f, w * 0.12f, h * 0.36f);
+            FillRect(pixels, w, h, w * 0.54f, h * 0.06f, w * 0.12f, h * 0.36f);
+            // Boots
+            FillRect(pixels, w, h, w * 0.30f, h * 0.02f, w * 0.18f, h * 0.06f);
+            FillRect(pixels, w, h, w * 0.52f, h * 0.02f, w * 0.18f, h * 0.06f);
+
+            tex.SetPixels32(pixels);
+            tex.Apply(updateMipmaps: true, makeNoLongerReadable: true);
+            return tex;
+        }
+
+        static void FillRect(Color32[] pixels, int w, int h, float x0, float y0, float rw, float rh)
+        {
+            int xi0 = Mathf.Clamp(Mathf.FloorToInt(x0), 0, w - 1);
+            int yi0 = Mathf.Clamp(Mathf.FloorToInt(y0), 0, h - 1);
+            int xi1 = Mathf.Clamp(Mathf.CeilToInt(x0 + rw), 0, w);
+            int yi1 = Mathf.Clamp(Mathf.CeilToInt(y0 + rh), 0, h);
+            var col = new Color32(245, 245, 245, 255);
+            for (int y = yi0; y < yi1; y++)
+            for (int x = xi0; x < xi1; x++)
+                pixels[y * w + x] = col;
+        }
+
+        static void FillEllipse(Color32[] pixels, int w, int h, float cx, float cy, float rx, float ry)
+        {
+            int xi0 = Mathf.Clamp(Mathf.FloorToInt(cx - rx), 0, w - 1);
+            int yi0 = Mathf.Clamp(Mathf.FloorToInt(cy - ry), 0, h - 1);
+            int xi1 = Mathf.Clamp(Mathf.CeilToInt(cx + rx), 0, w);
+            int yi1 = Mathf.Clamp(Mathf.CeilToInt(cy + ry), 0, h);
+            float rx2 = Mathf.Max(0.01f, rx * rx);
+            float ry2 = Mathf.Max(0.01f, ry * ry);
+            var col = new Color32(250, 250, 250, 255);
+            for (int y = yi0; y < yi1; y++)
+            {
+                float dy = (y + 0.5f - cy);
+                for (int x = xi0; x < xi1; x++)
+                {
+                    float dx = (x + 0.5f - cx);
+                    if ((dx * dx) / rx2 + (dy * dy) / ry2 <= 1f)
+                        pixels[y * w + x] = col;
+                }
+            }
+        }
+
+        static void FillRoundedTorso(Color32[] pixels, int w, int h, float cx, float cy, float halfW, float halfH)
+        {
+            // Soft rectangle with rounded shoulders.
+            FillRect(pixels, w, h, cx - halfW, cy - halfH, halfW * 2f, halfH * 2f);
+            FillEllipse(pixels, w, h, cx, cy + halfH * 0.55f, halfW * 1.05f, halfH * 0.55f);
         }
 
         public bool TrySpawn(int factionId, Rts2Role role, Vector3 surfaceAxis, out int unitIndex)
@@ -1774,13 +1939,17 @@ namespace Stargrave.Rts2
 
         void RenderInstances()
         {
-            if (_mesh == null || _mat == null || _alive <= 0)
+            if (!enableUnitCardLod || _alive <= 0)
                 return;
             EnsureRenderAssets();
+            EnsureBakedRoleCards();
+            if (_mesh == null || _mat == null)
+                return;
             CachePlanet();
 
             Camera cam = Camera.main;
             Vector3 camPos = cam != null ? cam.transform.position : Vector3.zero;
+            Vector3 camFwd = cam != null ? cam.transform.forward : Vector3.forward;
             float surfaceR = 0f;
             bool horizonCull = false;
             if (cam != null && _planet != null)
@@ -1789,44 +1958,85 @@ namespace Stargrave.Rts2
                 horizonCull = surfaceR > 1f;
             }
 
+            float maxDist = Mathf.Max(40f, unitCardMaxDistance);
+            float maxDistSq = maxDist * maxDist;
+
             int filled = 0;
             Color batchColor = default;
-            bool hasBatchColor = false;
+            Rts2Role batchRole = Rts2Role.Worker;
+            Texture2D batchTex = null;
+            bool hasBatch = false;
             for (int i = 0; i < _alive; i++)
             {
                 Rts2Unit u = _units[i];
                 if (u.alive == 0)
                     continue;
-                // Near units use character prefabs — skip capsule to avoid double-draw.
+                // Near units use character prefabs — skip card to avoid double-draw.
                 if (_visuals != null && _visuals.HasVisual(i))
                     continue;
 
-                Vector3 pos = GetWorldPosition(i);
+                Vector3 feet = GetFeetWorldPosition(i);
+                if ((feet - camPos).sqrMagnitude > maxDistSq)
+                    continue;
                 if (horizonCull &&
                     !PlanetHorizonCulling.IsVisibleInWorld(
-                        _planet, _planetCenter, surfaceR, camPos, pos, sticky: false))
+                        _planet, _planetCenter, surfaceR, camPos, feet, sticky: false))
                     continue;
 
-                Color unitColor = ColorForFaction(u.factionId, u.role);
-                // One solid colour per draw call — averaging mixed factions made every capsule green.
-                if (hasBatchColor &&
+                // Keep model look; light faction tint so armies stay readable.
+                Color unitColor = Color.Lerp(Color.white, ColorForFaction(u.factionId, u.role), 0.38f);
+                unitColor.a = 1f;
+                Texture2D tex = CardTextureForRole(u.role);
+
+                if (hasBatch &&
                     (filled >= InstanceBatch ||
+                     u.role != batchRole ||
+                     tex != batchTex ||
                      !AlmostSameColor(batchColor, unitColor)))
                 {
-                    FlushBatch(filled, batchColor);
+                    FlushBatch(filled, batchColor, batchTex);
                     filled = 0;
                 }
 
                 Vector3 up = new Vector3(u.axis.x, u.axis.y, u.axis.z).normalized;
-                Quaternion rot = Quaternion.FromToRotation(Vector3.up, up) * Quaternion.Euler(0f, u.yaw, 0f);
-                _batch[filled] = Matrix4x4.TRS(pos, rot, ScaleForRole(u.role));
+                if (up.sqrMagnitude < 1e-6f)
+                    up = Vector3.up;
+                Vector3 scale = CardScaleForRole(u.role);
+                Vector3 pos = feet + up * (scale.y * 0.5f);
+
+                // Billboard: face camera, stay upright on planet.
+                Vector3 toCam = camPos - pos;
+                Vector3 flat = Vector3.ProjectOnPlane(toCam, up);
+                if (flat.sqrMagnitude < 1e-6f)
+                    flat = Vector3.ProjectOnPlane(-camFwd, up);
+                if (flat.sqrMagnitude < 1e-6f)
+                    flat = Vector3.ProjectOnPlane(Vector3.forward, up);
+                flat.Normalize();
+                Quaternion rot = Quaternion.LookRotation(-flat, up);
+
+                _batch[filled] = Matrix4x4.TRS(pos, rot, scale);
                 _batchColors[filled] = unitColor;
                 batchColor = unitColor;
-                hasBatchColor = true;
+                batchRole = u.role;
+                batchTex = tex;
+                hasBatch = true;
                 filled++;
             }
             if (filled > 0)
-                FlushBatch(filled, batchColor);
+                FlushBatch(filled, batchColor, batchTex);
+        }
+
+        static Vector3 CardScaleForRole(Rts2Role role)
+        {
+            // Silhouette is tall/narrow (person-shaped), not a square card.
+            switch (role)
+            {
+                case Rts2Role.Archer: return new Vector3(1.15f, 2.7f, 1f); // Heavy
+                case Rts2Role.Noble: return new Vector3(1.0f, 2.4f, 1f);
+                case Rts2Role.Worker: return new Vector3(0.85f, 2.05f, 1f);
+                case Rts2Role.Merchant: return new Vector3(0.9f, 2.15f, 1f);
+                default: return new Vector3(0.95f, 2.3f, 1f); // Raider
+            }
         }
 
         static bool AlmostSameColor(Color a, Color b)
@@ -1836,10 +2046,11 @@ namespace Stargrave.Rts2
                    Mathf.Abs(a.b - b.b) < 0.02f;
         }
 
-        void FlushBatch(int count, Color color)
+        void FlushBatch(int count, Color color, Texture2D tex)
         {
             if (count <= 0)
                 return;
+            BindCardTexture(tex != null ? tex : _cardTex);
             _mpb.Clear();
             if (_mat.HasProperty(ColorId))
                 _mpb.SetColor(ColorId, color);
@@ -1857,6 +2068,8 @@ namespace Stargrave.Rts2
             };
             Graphics.RenderMeshInstanced(rp, _mesh, 0, _batch, count);
         }
+
+        void FlushBatch(int count, Color color) => FlushBatch(count, color, _cardTex);
 
         static readonly Color[] FactionPalette =
         {

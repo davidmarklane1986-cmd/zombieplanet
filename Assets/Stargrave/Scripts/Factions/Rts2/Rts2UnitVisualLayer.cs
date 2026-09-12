@@ -34,12 +34,12 @@ namespace Stargrave.Rts2
         float _nextRescan;
         Camera _cam;
 
-        // Keep near models rare — Instantiating skinned prefabs is a hitch source.
-        const int MaxRealized = 8;
-        const int MaxRealizePerRescan = 1;
-        const float RescanInterval = 1.25f;
-        const float RealizeDistance = 32f;
-        const float ReleaseDistance = 48f;
+        // Farther near models so armies look populated before cards take over.
+        const int MaxRealized = 70;
+        const int MaxRealizePerRescan = 4;
+        const float RescanInterval = 0.65f;
+        const float RealizeDistance = 80f;
+        const float ReleaseDistance = 110f;
         const float RunSpeedThreshold = 1.2f;
         const float FeetPlantSink = 0.05f;
         const float AnkleToSole = 0.09f;
@@ -128,7 +128,7 @@ namespace Stargrave.Rts2
             int spawned = 0;
             while (spawned < MaxRealizePerRescan && _realizedCount < MaxRealized)
             {
-                float bestSq = realizeSq;
+                float bestScore = float.MaxValue;
                 int best = -1;
                 int alive = _sim.UnitSlotCount;
                 for (int i = 0; i < alive; i++)
@@ -138,9 +138,15 @@ namespace Stargrave.Rts2
                     if (!_sim.TryGetUnit(i, out Rts2Unit u) || u.alive == 0)
                         continue;
                     float d = (_sim.GetWorldPosition(i) - camPos).sqrMagnitude;
-                    if (d < bestSq)
+                    if (d > realizeSq)
+                        continue;
+                    // Prefer combat (raiders/heavies) so nearby fights look populated.
+                    float score = d;
+                    if (Rts2Roles.IsCombat(u.role))
+                        score *= 0.55f;
+                    if (score < bestScore)
                     {
-                        bestSq = d;
+                        bestScore = score;
                         best = i;
                     }
                 }
