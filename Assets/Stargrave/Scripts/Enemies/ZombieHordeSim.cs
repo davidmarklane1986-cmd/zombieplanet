@@ -472,9 +472,7 @@ public sealed class ZombieHordeSim : MonoBehaviour
             surfaceR = Mathf.Max(1f, _agents[0].radius);
 
         // Slightly smaller occlusion sphere + pad so limb doesn't flicker as you walk.
-        float under = Mathf.Max(0f, camRadius * camRadius - surfaceR * surfaceR * 0.88f);
-        float horizonDist = Mathf.Sqrt(under) + surfaceR * 0.12f;
-        horizonDist = Mathf.Max(horizonDist, surfaceR * 0.85f);
+        float horizonDist = PlanetHorizonCulling.ApproximateHorizonDistance(camRadius, surfaceR);
         float horizonSq = horizonDist * horizonDist;
         float waterLine = GetWaterLine();
 
@@ -498,8 +496,16 @@ public sealed class ZombieHordeSim : MonoBehaviour
 
             Vector3 pos = center + _agents[i].dir * _agents[i].radius;
             bool sticky = _drawnLast[i];
-            if (!IsOverHorizon(camPos, center, surfaceR, pos, sticky))
+            if (_planetComp != null)
+            {
+                if (!PlanetHorizonCulling.IsVisibleInWorld(
+                        _planetComp, center, surfaceR, camPos, pos, sticky))
+                    continue;
+            }
+            else if (!PlanetHorizonCulling.IsVisible(camPos, center, surfaceR, pos, sticky))
+            {
                 continue;
+            }
 
             float d = (pos - camPos).sqrMagnitude;
             if (d > horizonSq)
@@ -573,30 +579,6 @@ public sealed class ZombieHordeSim : MonoBehaviour
         }
     }
 
-    static bool IsOverHorizon(Vector3 camPos, Vector3 center, float surfaceR, Vector3 agentPos, bool sticky)
-    {
-        Vector3 camRel = camPos - center;
-        float camR2 = camRel.sqrMagnitude;
-        if (camR2 < 1e-4f)
-            return true;
-        // Shrink occlusion sphere so the geometric limb doesn't flicker with small camera moves.
-        float occR = surfaceR * (sticky ? 0.90f : 0.94f);
-        Vector3 toAgent = agentPos - camPos;
-        float dist = toAgent.magnitude;
-        if (dist < 0.01f)
-            return true;
-        Vector3 dir = toAgent / dist;
-        float b = Vector3.Dot(camRel, dir);
-        float c = camR2 - occR * occR;
-        float disc = b * b - c;
-        if (disc <= 0f)
-            return true;
-        float tHit = -b - Mathf.Sqrt(disc);
-        float margin = sticky ? 2.5f : 1.0f;
-        if (tHit > 0.35f && tHit < dist - margin)
-            return false;
-        return true;
-    }
     void BindBody(int slot, int agent, Vector3 center)
     {
         Agent a = _agents[agent];

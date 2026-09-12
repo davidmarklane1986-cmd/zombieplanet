@@ -602,7 +602,7 @@ public sealed class SoldierAI : MonoBehaviour
             }
 
             _zombieTarget = null;
-            _npc.Motor.SetDestination(_npc.Faction.GetSafePosition(), _npc.Faction.Combat.soldierMoveSpeed, 4f);
+            _npc.Motor.SetDestination(_npc.Faction.GetSafePosition(), GetMoveSpeed(), 4f);
             _safe = (transform.position - _npc.Faction.GetSafePosition()).sqrMagnitude < 64f;
             if (_safe && _npc.Faction.State == FactionState.Retreating)
                 _npc.Faction.BeginRecovery();
@@ -637,7 +637,7 @@ public sealed class SoldierAI : MonoBehaviour
             _hasDuty = false;
             _npc.Motor.SetDestination(
                 _npc.Faction.BackupPoint,
-                _npc.Faction.Combat.soldierMoveSpeed,
+                GetMoveSpeed(),
                 4f);
             return;
         }
@@ -647,7 +647,7 @@ public sealed class SoldierAI : MonoBehaviour
             _hasDuty = false;
             _npc.Motor.SetDestination(
                 _npc.Faction.DefensePoint,
-                _npc.Faction.Combat.soldierMoveSpeed,
+                GetMoveSpeed(),
                 4f);
             return;
         }
@@ -663,7 +663,7 @@ public sealed class SoldierAI : MonoBehaviour
         if (!_npc.Faction.TryPickSoldierDutyPoint(_npc, out Vector3 destination))
             return;
         _hasDuty = true;
-        _npc.Motor.SetDestination(destination, _npc.Faction.Combat.soldierMoveSpeed, 3f);
+        _npc.Motor.SetDestination(destination, GetMoveSpeed(), 3f);
     }
 
     void SelectTarget()
@@ -827,22 +827,25 @@ public sealed class SoldierAI : MonoBehaviour
         if (target == null)
             return;
 
-        float range = _npc.Faction.Combat.soldierShootRange;
+        float range = GetShootRange();
+        int damage = GetDamage();
+        float cooldown = GetAttackCooldown();
+        float moveSpeed = GetMoveSpeed();
         Vector3 toTarget = target.position - transform.position;
         bool inRange = toTarget.sqrMagnitude <= range * range;
         if (inRange && Time.time >= _nextAttack)
         {
-            _nextAttack = Time.time + _npc.Faction.Combat.soldierAttackCooldown;
+            _nextAttack = Time.time + cooldown;
             _lastShotHit = FactionSoldierHitscan.TryFire(
                 _npc,
                 target,
                 range,
-                _npc.Faction.Combat.soldierDamage);
+                damage);
         }
 
         if (!inRange)
         {
-            _npc.Motor.SetDestination(target.position, _npc.Faction.Combat.soldierMoveSpeed, range * 0.7f);
+            _npc.Motor.SetDestination(target.position, moveSpeed, range * 0.7f);
             return;
         }
 
@@ -850,8 +853,36 @@ public sealed class SoldierAI : MonoBehaviour
         {
             _nextSkirmish = Time.time + Mathf.Max(0.35f, _npc.Faction.Economy.combatDecisionInterval);
             Vector3 point = SkirmishPoint(target.position, range);
-            _npc.Motor.SetDestination(point, _npc.Faction.Combat.soldierMoveSpeed, 2f);
+            _npc.Motor.SetDestination(point, moveSpeed, 2f);
         }
+    }
+
+    float GetShootRange()
+    {
+        return _npc.Role == FactionNpcRole.Archer
+            ? _npc.Faction.Combat.archerShootRange
+            : _npc.Faction.Combat.soldierShootRange;
+    }
+
+    int GetDamage()
+    {
+        return _npc.Role == FactionNpcRole.Archer
+            ? _npc.Faction.Combat.archerDamage
+            : _npc.Faction.Combat.soldierDamage;
+    }
+
+    float GetAttackCooldown()
+    {
+        return _npc.Role == FactionNpcRole.Archer
+            ? _npc.Faction.Combat.archerAttackCooldown
+            : _npc.Faction.Combat.soldierAttackCooldown;
+    }
+
+    float GetMoveSpeed()
+    {
+        return _npc.Role == FactionNpcRole.Archer
+            ? _npc.Faction.Combat.archerMoveSpeed
+            : _npc.Faction.Combat.soldierMoveSpeed;
     }
 
     Vector3 SkirmishPoint(Vector3 target, float range)
@@ -881,6 +912,112 @@ public sealed class SoldierAI : MonoBehaviour
                 ? Vector3.Cross(up, side).normalized * (range * 0.2f)
                 : side * (range * 0.2f);
         return _npc.Faction.OffsetOnSurface(target, offset);
+    }
+
+    float CurrentHealthFraction()
+    {
+        return (float)_npc.CurrentHealth / Mathf.Max(1, _npc.MaxHealth);
+    }
+}
+
+/// <summary>Noble. Travels to claimable towns and drains loyalty under escort.</summary>
+public sealed class NobleAI : MonoBehaviour
+{
+    FactionNpc _npc;
+    ClaimableTown _targetTown;
+    float _nextDecision;
+    float _lodNext;
+    bool _phased;
+
+    public ClaimableTown TargetTown => _targetTown;
+
+    void Awake()
+    {
+        _npc = GetComponent<FactionNpc>();
+    }
+
+    void Update()
+    {
+        EnsurePhases();
+        if (FactionNpcLod.IsFar(transform.position))
+        {
+            if (Time.time < _lodNext)
+                return;
+            _lodNext = Time.time + FactionNpcLod.AiInterval;
+            Tick(FactionNpcLod.AiInterval);
+            return;
+        }
+
+        Tick(Time.deltaTime);
+    }
+
+    void EnsurePhases()
+    {
+        if (_phased || _npc == null || _npc.Faction == null)
+            return;
+        _phased = true;
+        int seed = FactionNpcLod.PhaseSeed(this);
+        float combat = Mathf.Max(0.05f, _npc.Faction.Economy.combatDecisionInterval);
+        _nextDecision = Time.time + FactionNpcLod.PhaseOffset(seed, combat);
+        _lodNext = Time.time + FactionNpcLod.PhaseOffset(seed ^ unchecked((int)0x27d4eb2d), FactionNpcLod.AiInterval);
+    }
+
+    public void AssignTown(ClaimableTown town)
+    {
+        if (_targetTown != null && _targetTown != town)
+            _targetTown.StopClaim(_npc);
+        _targetTown = town;
+    }
+
+    public void ClearTown()
+    {
+        if (_targetTown != null)
+            _targetTown.StopClaim(_npc);
+        _targetTown = null;
+    }
+
+    public void Tick(float deltaTime)
+    {
+        if (_npc == null || _npc.Faction == null || _npc.IsDead)
+            return;
+
+        float speed = _npc.Faction.Combat.nobleMoveSpeed;
+        if (_npc.Faction.State == FactionState.Retreating ||
+            _npc.Faction.State == FactionState.Recovering ||
+            CurrentHealthFraction() <= _npc.Faction.Combat.soldierRetreatHealth)
+        {
+            ClearTown();
+            _npc.Motor.SetDestination(_npc.Faction.GetSafePosition(), speed, 4f);
+            return;
+        }
+
+        if (Time.time >= _nextDecision)
+        {
+            _nextDecision = Time.time + _npc.Faction.Economy.combatDecisionInterval;
+            if (_targetTown == null)
+                _targetTown = _npc.Faction.ClaimTargetTown;
+            if (_targetTown != null &&
+                _targetTown.Owner == _npc.Faction)
+                ClearTown();
+        }
+
+        if (_targetTown == null)
+        {
+            _npc.Motor.SetDestination(_npc.Faction.GetSafePosition(), speed, 4f);
+            return;
+        }
+
+        float claimRadius = Mathf.Max(1f, _npc.Faction.Economy.townClaimRadius);
+        Vector3 toTown = _targetTown.transform.position - transform.position;
+        if (toTown.sqrMagnitude > claimRadius * claimRadius)
+        {
+            _targetTown.StopClaim(_npc);
+            _npc.Motor.SetDestination(_targetTown.transform.position, speed, claimRadius * 0.5f);
+            return;
+        }
+
+        _targetTown.TryBeginClaim(_npc);
+        _npc.Motor.SetDestination(_targetTown.transform.position, speed * 0.35f, 1.5f);
     }
 
     float CurrentHealthFraction()

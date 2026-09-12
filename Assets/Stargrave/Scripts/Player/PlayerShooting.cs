@@ -663,7 +663,9 @@ public class PlayerShooting : MonoBehaviour
             return true;
         if (other.gameObject.layer == 2)
             return true;
-        if (other.isTrigger && other.GetComponentInParent<ZombieAI>() == null)
+        if (other.isTrigger &&
+            other.GetComponentInParent<ZombieAI>() == null &&
+            other.GetComponentInParent<Stargrave.Rts2.Rts2UnitHitProxy>() == null)
             return true;
         if (_playerRoot != null && other.transform.IsChildOf(_playerRoot))
             return true;
@@ -996,30 +998,67 @@ public class PlayerShooting : MonoBehaviour
 
         Ray ray = new Ray(origin, dir.normalized);
         RaycastHit[] hits = Physics.RaycastAll(ray, shootRange, ~0, QueryTriggerInteraction.Collide);
-        if (hits == null || hits.Length == 0)
-            return false;
-
-        System.Array.Sort(hits, CompareRaycastHitsByDistance);
         RaycastHit? firstWorld = null;
-        for (int i = 0; i < hits.Length; i++)
+
+        if (hits != null && hits.Length > 0)
         {
-            Collider col = hits[i].collider;
-            if (IsIgnoredCrosshairCollider(col))
-                continue;
-
-            var zombie = col.GetComponentInParent<ZombieAI>();
-            if (zombie != null)
+            System.Array.Sort(hits, CompareRaycastHitsByDistance);
+            for (int i = 0; i < hits.Length; i++)
             {
-                if (firstWorld.HasValue && firstWorld.Value.distance + 0.05f < hits[i].distance)
-                    return false;
+                Collider col = hits[i].collider;
+                if (IsIgnoredCrosshairCollider(col))
+                    continue;
 
-                zombie.TakeDamage(GetDamageAtDistance(hits[i].distance));
+                var zombie = col.GetComponentInParent<ZombieAI>();
+                if (zombie != null)
+                {
+                    if (firstWorld.HasValue && firstWorld.Value.distance + 0.05f < hits[i].distance)
+                        break;
+
+                    zombie.TakeDamage(GetDamageAtDistance(hits[i].distance));
+                    NotifyHitConfirmed();
+                    return true;
+                }
+
+                var factionProxy = col.GetComponentInParent<Stargrave.Rts2.Rts2UnitHitProxy>();
+                if (factionProxy != null && factionProxy.UnitIndex >= 0 && Stargrave.Rts2.Rts2UnitSim.HasInstance)
+                {
+                    if (firstWorld.HasValue && firstWorld.Value.distance + 0.05f < hits[i].distance)
+                        break;
+
+                    Transform playerTf = _playerRoot != null ? _playerRoot : transform;
+                    if (Stargrave.Rts2.Rts2UnitSim.Instance.TryDamageUnitFromPlayer(
+                            factionProxy.UnitIndex,
+                            GetDamageAtDistance(hits[i].distance),
+                            playerTf))
+                    {
+                        NotifyHitConfirmed();
+                        return true;
+                    }
+                }
+
+                if (!firstWorld.HasValue && !col.isTrigger)
+                    firstWorld = hits[i];
+            }
+        }
+
+        // Far GPU faction units often have no collider — proximity along the shot ray.
+        if (Stargrave.Rts2.Rts2UnitSim.HasInstance)
+        {
+            Transform playerTf = _playerRoot != null ? _playerRoot : transform;
+            float maxDist = firstWorld.HasValue ? firstWorld.Value.distance : shootRange;
+            int dmg = GetDamageAtDistance(Mathf.Min(maxDist, shootRange * 0.5f));
+            if (Stargrave.Rts2.Rts2UnitSim.Instance.TryDamageAlongPlayerRay(
+                    origin,
+                    dir.normalized,
+                    maxDist,
+                    1.35f,
+                    dmg,
+                    playerTf))
+            {
                 NotifyHitConfirmed();
                 return true;
             }
-
-            if (!firstWorld.HasValue && !col.isTrigger)
-                firstWorld = hits[i];
         }
 
         return false;

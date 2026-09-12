@@ -105,7 +105,7 @@ public class FoliageByColour : MonoBehaviour
              "many prefabs. Default lowered to 50 (a few prefabs per frame, queued nearest-first); RAISE for " +
              "faster tree/rock pop-in, LOWER for smoother frames. NOTE: changing this code default only affects " +
              "components added AFTER the change — set the value on an existing scene component in the Inspector.")]
-    [Min(16)] public int maxInstantiatesPerFrame = 50;
+    [Min(16)] public int maxInstantiatesPerFrame = 100;
     [Tooltip("Multiplies the attempt budget over the summed target counts. This is a mostly-ocean planet, so most rays land in water and are wasted.")]
     [Min(2)] public int attemptBudgetMultiplier = 20;
     [Tooltip("STREAMING ONLY. While there's a BACKLOG of pending cells near the player (initial load, a " +
@@ -114,7 +114,7 @@ public class FoliageByColour : MonoBehaviour
              "once caught up. Cells are generated nearest-first, so this burst is spent on the closest stuff. " +
              "1 = no burst (steady rate always). Higher fills faster but costs more per frame DURING the burst; " +
              "lower it toward 1 if you see frame spikes on load.")]
-    [Min(1)] public int streamWarmupBurst = 2;
+    [Min(1)] public int streamWarmupBurst = 3;
     [Tooltip("PRIORITY POP-IN. Multiplies the per-frame raycast budget ('Scatter Per Frame') ONLY while " +
              "scattering a cell within 'Near Cell Radius' of the player, so the IMMEDIATE vicinity fills in " +
              "fast while the many distant cells keep draining at the cheap steady rate. Because near cells are " +
@@ -122,13 +122,13 @@ public class FoliageByColour : MonoBehaviour
              "for the stuff the player is standing in — it does NOT raise the sustained cost the way cranking " +
              "'Scatter Per Frame' globally would. RAISE if nearby foliage still pops in too slowly; LOWER " +
              "toward 1 if you get a brief frame hitch when walking into fresh terrain. 1 = no near boost.")]
-    [Min(1)] public int nearCellBudgetMultiplier = 3;
+    [Min(1)] public int nearCellBudgetMultiplier = 6;
     [Tooltip("PRIORITY POP-IN. World-unit radius around the player treated as the 'immediate vicinity' that " +
              "gets the 'Near Cell Budget Multiplier'. Cells whose centre is within this distance fill fast; " +
              "everything farther uses the steady rate. Keep this around the close foreground (a cell or two " +
              "out). Bigger = more cells get the boost (fills more, costs more per frame); smaller = tighter, " +
              "cheaper boost. 0 = built-in default (90).")]
-    public float nearCellRadius = 90f;
+    public float nearCellRadius = 140f;
     [Tooltip("SMOOTHNESS CEILING. Hard cap on TOTAL streaming raycasts in any single frame, AFTER the warmup " +
              "and near-cell multipliers are applied. This is what stops the periodic stutter when you walk " +
              "into fresh terrain: without it, a cell becoming 'near' would dump 'Scatter Per Frame' × 'Near " +
@@ -196,7 +196,7 @@ public class FoliageByColour : MonoBehaviour
     public bool phaseInEnabled = true;
     [Tooltip("Seconds a freshly spawned instance/object takes to grow from 'Phase In Start Scale' to its full " +
              "authored size. 0 = built-in default (0.6s). Sensible range ~0.4-0.8s.")]
-    public float phaseInDuration = 0.6f;
+    public float phaseInDuration = 0.28f;
     [Tooltip("Fraction of full size an instance starts at when it phases in (0 = sprouts from nothing, 0.05 = " +
              "starts at 5%). Clamped to [0, 0.95]. The grow is anchored at the BASE (ground contact along the " +
              "surface normal) so foliage rises out of the ground rather than scaling about its midpoint.")]
@@ -214,9 +214,25 @@ public class FoliageByColour : MonoBehaviour
     [Tooltip("Max distance (world units) from the camera at which GPU-instanced grass chunks are drawn. " +
              "0 = use the built-in default (200). Lower = more culling / faster; raise to see grass farther.")]
     public float grassDrawDistance = 200f;
-    [Tooltip("Max distance (world units) from the camera at which pooled trees/rocks/palms stay active. " +
-             "0 = use the built-in default (400). Objects are visible farther than grass by default.")]
-    public float objectDrawDistance = 400f;
+    [Tooltip("Max distance (world units) from the camera at which pooled TREES/PALMS stay active. " +
+             "0 = use the built-in default (400). Rocks use 'Rock Draw Distance' instead.")]
+    [UnityEngine.Serialization.FormerlySerializedAs("objectDrawDistance")]
+    public float treeDrawDistance = 400f;
+    [Tooltip("Max distance (world units) from the camera at which pooled ROCKS stay active. " +
+             "Keep shorter than trees so mid-range stays leafy without paying for distant stone. " +
+             "0 = use the built-in default (180).")]
+    public float rockDrawDistance = 180f;
+
+    [Header("Tree impostor rings (v1)")]
+    [Tooltip("When ON, trees/palms use near prefabs + mid/far GPU billboards. Rocks unchanged.")]
+    public bool treeImpostorsEnabled = true;
+    [Min(10f)] public float treeNearDistance = 120f;
+    [Min(20f)] public float treeMidDistance = 280f;
+    [Min(40f)] public float treeFarDistance = 520f;
+    [Range(0.05f, 1f)] public float treeFarDensity = 0.35f;
+    [Min(0f)] public float treeNearHysteresis = 12f;
+    [Tooltip("Hard cap on mid/far impostor instances submitted per frame (nearest chunks first). 0 = 2500.")]
+    [Min(0)] public int maxTreeImpostorsPerFrame = 2000;
     [Tooltip("Pooled trees/rocks are also FRUSTUM-culled (deactivated when outside the camera view), not just " +
              "distance-culled. This margin (world units) activates a chunk slightly BEFORE it enters the visible " +
              "frustum so solid objects don't visibly pop in when you turn. 0 = built-in default (15). A small " +
@@ -244,12 +260,9 @@ public class FoliageByColour : MonoBehaviour
              "(350). NOTE: changing this code default only affects components added AFTER the change — set " +
              "the value on the existing scene component in the Inspector to load further on it.")]
     public float loadRadius = 350f;
-    [Tooltip("LOAD AHEAD. Shift the nearest-first generation PRIORITY this many world units along the " +
-             "camera's look/move direction, so cells in front of the player are generated before cells " +
-             "behind — foliage is ready before you arrive. This biases only the ORDER cells load in, not " +
-             "WHICH cells load or unload (so it never causes thrash). 0 = built-in default (80) — applied " +
-             "automatically (incl. the existing scene component, which deserializes this new field to 0). " +
-             "Set NEGATIVE to disable (pure nearest-first). Keep it under Load Radius.")]
+    [Tooltip("LOAD AHEAD. Shift nearest-first generation PRIORITY this many world units along the " +
+             "camera look direction so cells in front generate before cells behind. 0 = pure nearest-first " +
+             "(closest to the player always loads first — recommended). Positive = bias ahead. Negative = same as 0.")]
     public float loadAheadDistance = 0f;
     [Tooltip("Extra distance (world units) BEYOND Load Radius before a loaded cell is unloaded. This " +
              "hysteresis band stops cells on the boundary thrashing load/unload as you move. 0 = default (60).")]
@@ -285,7 +298,8 @@ public class FoliageByColour : MonoBehaviour
     // component (so culling works with good values and NO scene edit). disableCulling deserializes to
     // false on the existing component => culling is ON by default.
     const float DefaultGrassDrawDistance = 200f;
-    const float DefaultObjectDrawDistance = 400f;
+    const float DefaultTreeDrawDistance = 400f;
+    const float DefaultRockDrawDistance = 180f;
     const float DefaultChunkSize = 40f;
     // Small "border" around the camera frustum (world units). The single culling rule is: a chunk draws
     // when it is inside the camera frustum expanded by this small margin, otherwise it is culled.
@@ -301,15 +315,15 @@ public class FoliageByColour : MonoBehaviour
     const int DefaultMaxVisibleGrassInstancesPerFrame = 300000;
 
     // Phase-in default used when phaseInDuration deserializes to 0 on an existing scene component.
-    const float DefaultPhaseInDuration = 0.6f;
+    const float DefaultPhaseInDuration = 0.28f;
 
     // Streaming defaults, used when the matching serialized field is <= 0 (so streaming works with good
     // values and no scene edit on the existing component).
     const float DefaultLoadRadius = 350f;
     const float DefaultUnloadHysteresis = 60f;
-    // Look-ahead generation bias used when loadAheadDistance deserializes to 0 (so the bias is on by
-    // default, including on the existing scene component). A negative loadAheadDistance disables it.
-    const float DefaultLoadAhead = 80f;
+    // Look-ahead generation bias. 0 on a scene component means pure nearest-first
+    // (closest cells generate first). Set a positive value to bias along look direction.
+    const float DefaultLoadAhead = 0f;
     const float DefaultRestreamMoveThreshold = 20f;
     // Safety clamp on the per-axis cell scan range, so an extreme loadRadius can't freeze the recompute.
     const int MaxCellScanRange = 64;
@@ -320,8 +334,8 @@ public class FoliageByColour : MonoBehaviour
     // scene component (so the immediate-vicinity boost works with no scene edit). The boost is applied ONLY
     // to cells within DefaultNearCellRadius of the player, so per-frame cost spikes only briefly and only for
     // the foliage the player is standing in.
-    const int DefaultNearCellBudgetMultiplier = 3;
-    const float DefaultNearCellRadius = 90f;
+    const int DefaultNearCellBudgetMultiplier = 6;
+    const float DefaultNearCellRadius = 140f;
 
     // ---- GPU-instanced batch set (one per GpuInstanced rule). Mirrors GpuGrassCarpet's draw path. ----
     class SubMeshDraw
@@ -624,18 +638,11 @@ public class FoliageByColour : MonoBehaviour
             return total;
         }
 
-        // Draws the chunks that pass the camera FRUSTUM (+ small border) test, NEAREST-FIRST so the grass
-        // closest to the camera renders first (better early-Z/overdraw + a meaningful priority under budget).
-        // Frustum planes are computed once per frame by the caller. Per-frame cost scales with VISIBLE chunks.
-        // 'cam' is the resolved gameplay camera: it is passed to Graphics.DrawMeshInstanced so grass renders
-        // ONLY into that camera (not every camera / the editor Scene view), which is what made far-side and
-        // behind-camera grass appear before. drawDistance is effectively unlimited (see caller) so distance
-        // never removes in-view chunks; the frustum + border is the sole deciding rule.
-        // budgetRemaining caps total instances submitted this frame across all grass sets; because chunks are
-        // sorted near->far, the chunks skipped when the budget runs out are the FARTHEST ones.
+        // Draws chunks that pass frustum + limb + terrain LoS, nearest-first.
         public void Draw(int layer, bool cull, Vector3 camPos, Plane[] planes, float drawDistance,
                          float frustumMargin, Camera cam, ref int budgetRemaining,
-                         bool phaseEnabled, float phaseDur, float phaseStartScale, float now)
+                         bool phaseEnabled, float phaseDur, float phaseStartScale, float now,
+                         Planet planet, Vector3 planetCenter, float surfaceRadius, bool horizonCull)
         {
             // 1) Gather visible chunks into the reused scratch list and stamp each with its sqr-distance.
             _visible.Clear();
@@ -652,6 +659,11 @@ public class FoliageByColour : MonoBehaviour
                     if (sd > maxD * maxD)
                         continue;
                     if (planes != null && !GeometryUtility.TestPlanesAABB(planes, Expanded(chunk.bounds, frustumMargin)))
+                        continue;
+                    // sticky: only drop chunks clearly behind ridges (avoids swiss-cheese missing patches).
+                    if (horizonCull &&
+                        !PlanetHorizonCulling.IsVisibleInWorld(
+                            planet, planetCenter, surfaceRadius, camPos, chunk.center, sticky: true))
                         continue;
                 }
                 chunk.sortDist = sd;
@@ -724,6 +736,7 @@ public class FoliageByColour : MonoBehaviour
     class ObjChunk
     {
         public readonly List<GameObject> objects = new List<GameObject>();
+        public readonly List<TreePlacement> treePlacements = new List<TreePlacement>();
         public Vector3 min, max;
         public bool hasBounds;
         public Vector3 center;
@@ -732,6 +745,22 @@ public class FoliageByColour : MonoBehaviour
         public bool active = true;
         public float sortDist; // scratch: sqr distance to camera this frame (for nearest-first activation)
         public Vector3Int cell;  // owning streaming cell (for unload bookkeeping)
+    }
+
+    public struct TreePlacement
+    {
+        public Vector3 pos;
+        public Vector3 up;
+        public float yaw;
+        public float height;
+        public float widthScale;
+        public int farKey;
+        public GameObject go;
+        public GameObject prefab; // for lazy near instantiate
+        public float scale;
+        public bool nearActive;
+        public bool goInChunkObjects;
+        public Matrix4x4 matrix; // cached impostor TRS (built once at place)
     }
 
     // Cached comparer so the per-frame pooled-chunk sort allocates no delegate.
@@ -753,6 +782,8 @@ public class FoliageByColour : MonoBehaviour
         // Pooled-object spatial buckets for distance culling (GameObjectPool rules only).
         public Dictionary<Vector3Int, ObjChunk> objChunkMap;
         public List<ObjChunk> objChunks; // flat list built at finalize time for cheap per-frame iteration
+        // True when this pooled rule is rock/stone (shorter draw distance than trees/palms).
+        public bool isRockRule;
         // telemetry
         public int rejSlope, rejElev, rejDensity, rejSpacing;
     }
@@ -773,13 +804,15 @@ public class FoliageByColour : MonoBehaviour
 
     // Result of a single placement attempt (lets the shared helper report a pooled instantiate so the
     // caller can charge the per-frame instantiate budget without the helper needing to be a coroutine).
-    enum PlaceResult { Skipped, PlacedGpu, PlacedPooled }
+    enum PlaceResult { Skipped, PlacedGpu, PlacedPooled, PlacedRecord }
 
     Planet _planet;
     int _layer;
     bool _ready;
     Camera _cam;
     readonly Plane[] _frustumPlanes = new Plane[6];
+    int _treeNearInstThisFrame;
+    int _treeImpostorBudgetRemaining;
 
     // ---- Streaming state ----
     // Surface sampling params, captured once after the planet has generated (constant thereafter).
@@ -1374,6 +1407,7 @@ public class FoliageByColour : MonoBehaviour
                 rule = rule,
                 prefabs = prefabs,
                 invCell = 1f / Mathf.Max(0.05f, rule.minSpacing),
+                isRockRule = IsRockRuleName(rule.name),
             };
 
             if (rule.render == FoliageRenderMode.GpuInstanced)
@@ -1521,8 +1555,9 @@ public class FoliageByColour : MonoBehaviour
         }
 
         Vector3 up = rt.rule.orient == FoliageOrientMode.Upright ? radial : hitNormal;
+        float yawDeg = Random.value * 360f;
         Quaternion rot = Quaternion.FromToRotation(Vector3.up, up)
-                         * Quaternion.AngleAxis(Random.value * 360f, Vector3.up);
+                         * Quaternion.AngleAxis(yawDeg, Vector3.up);
         float scale = Random.Range(rt.rule.scaleRange.x, rt.rule.scaleRange.y);
         Vector3 placePos = pos + hitNormal * rt.rule.surfaceOffset;
 
@@ -1539,18 +1574,166 @@ public class FoliageByColour : MonoBehaviour
             var prefab = rt.prefabs[Random.Range(0, rt.prefabs.Count)];
             if (prefab != null)
             {
-                var go = Object.Instantiate(prefab, placePos, rot, rt.poolContainer);
-                go.transform.localScale = prefab.transform.localScale * scale;
-                Stargrave.CameraOcclusion.FoliageOccluder.EnsureOn(go);
-                AddPooledToChunk(rt, go, placePos);
-                PooledInstanceCreated?.Invoke(go, rt.rule != null ? rt.rule.name : string.Empty);
-                BeginPooledPhaseIn(go.transform);
-                rt.placed++;
-                return PlaceResult.PlacedPooled;
+                var res = PlacePooledVisual(rt, prefab, placePos, up, yawDeg * Mathf.Deg2Rad, scale);
+                if (res != PlaceResult.Skipped)
+                {
+                    rt.placed++;
+                    return res;
+                }
             }
         }
 
         return PlaceResult.Skipped;
+    }
+
+    /// <summary>
+    /// Pooled tree/rock visual: rocks (or impostors off) instantiate immediately; trees record a placement
+    /// and only instantiate when inside the near ring (lazy).
+    /// </summary>
+    PlaceResult PlacePooledVisual(
+        RuleRuntime rt, GameObject prefab, Vector3 placePos, Vector3 up, float yawRad, float scale)
+    {
+        bool useImpostors = treeImpostorsEnabled && !rt.isRockRule;
+        if (!useImpostors)
+        {
+            Quaternion rot = Quaternion.FromToRotation(Vector3.up, up)
+                             * Quaternion.AngleAxis(yawRad * Mathf.Rad2Deg, Vector3.up);
+            var go = Object.Instantiate(prefab, placePos, rot, rt.poolContainer);
+            go.transform.localScale = prefab.transform.localScale * scale;
+            Stargrave.CameraOcclusion.FoliageOccluder.EnsureOn(go);
+            AddPooledToChunk(rt, go, placePos);
+            PooledInstanceCreated?.Invoke(go, rt.rule != null ? rt.rule.name : string.Empty);
+            BeginPooledPhaseIn(go.transform);
+            return PlaceResult.PlacedPooled;
+        }
+
+        float height = EstimatePrefabHeight(prefab, scale);
+        var placement = new TreePlacement
+        {
+            pos = placePos,
+            up = up.sqrMagnitude > 1e-8f ? up.normalized : Vector3.up,
+            yaw = yawRad,
+            height = height,
+            widthScale = 0.72f,
+            farKey = HashPlacement(placePos),
+            go = null,
+            prefab = prefab,
+            scale = scale,
+            nearActive = false,
+            goInChunkObjects = false,
+            matrix = FoliageTreeImpostorDraw.MakeMatrix(
+                placePos,
+                up.sqrMagnitude > 1e-8f ? up.normalized : Vector3.up,
+                yawRad,
+                height,
+                0.72f)
+        };
+
+        bool wantNear = false;
+        Camera cam = ResolveCamera();
+        if (cam != null)
+            wantNear = (placePos - cam.transform.position).sqrMagnitude
+                       <= treeNearDistance * treeNearDistance;
+
+        if (wantNear)
+        {
+            if (!TryInstantiateTreeNear(rt, ref placement, chargeFrameBudget: false))
+            {
+                AddTreePlacement(rt, placement);
+                return PlaceResult.PlacedRecord;
+            }
+            AddTreePlacement(rt, placement);
+            return PlaceResult.PlacedPooled;
+        }
+
+        AddTreePlacement(rt, placement);
+        return PlaceResult.PlacedRecord;
+    }
+
+    static int HashPlacement(Vector3 pos)
+    {
+        unchecked
+        {
+            int x = Mathf.RoundToInt(pos.x * 10f);
+            int y = Mathf.RoundToInt(pos.y * 10f);
+            int z = Mathf.RoundToInt(pos.z * 10f);
+            return x * 73856093 ^ y * 19349663 ^ z * 83492791;
+        }
+    }
+
+    static readonly Dictionary<GameObject, float> s_prefabHeightCache = new Dictionary<GameObject, float>(64);
+
+    static float EstimatePrefabHeight(GameObject prefab, float scale)
+    {
+        float baseH = 8f;
+        if (prefab != null)
+        {
+            if (!s_prefabHeightCache.TryGetValue(prefab, out baseH))
+            {
+                baseH = 0f;
+                var filters = prefab.GetComponentsInChildren<MeshFilter>(true);
+                for (int i = 0; i < filters.Length; i++)
+                {
+                    MeshFilter mf = filters[i];
+                    if (mf == null || mf.sharedMesh == null)
+                        continue;
+                    float sy = Mathf.Abs(mf.transform.localScale.y);
+                    baseH = Mathf.Max(baseH, mf.sharedMesh.bounds.size.y * sy);
+                }
+                baseH *= Mathf.Max(0.01f, prefab.transform.localScale.y);
+                if (baseH < 0.5f)
+                    baseH = 8f;
+                s_prefabHeightCache[prefab] = baseH;
+            }
+        }
+        return baseH * Mathf.Max(0.05f, scale);
+    }
+
+    bool TryInstantiateTreeNear(RuleRuntime rt, ref TreePlacement placement, bool chargeFrameBudget)
+    {
+        if (placement.go != null || placement.prefab == null || rt.poolContainer == null)
+            return placement.go != null;
+        if (chargeFrameBudget && _treeNearInstThisFrame >= maxInstantiatesPerFrame)
+            return false;
+
+        Quaternion rot = Quaternion.FromToRotation(Vector3.up, placement.up)
+                         * Quaternion.AngleAxis(placement.yaw * Mathf.Rad2Deg, Vector3.up);
+        var go = Object.Instantiate(placement.prefab, placement.pos, rot, rt.poolContainer);
+        go.transform.localScale = placement.prefab.transform.localScale * placement.scale;
+        Stargrave.CameraOcclusion.FoliageOccluder.EnsureOn(go);
+        PooledInstanceCreated?.Invoke(go, rt.rule != null ? rt.rule.name : string.Empty);
+        BeginPooledPhaseIn(go.transform);
+        placement.go = go;
+        placement.nearActive = true;
+        if (chargeFrameBudget)
+            _treeNearInstThisFrame++;
+        return true;
+    }
+
+    void AddTreePlacement(RuleRuntime rt, TreePlacement placement)
+    {
+        if (rt.objChunkMap == null)
+            rt.objChunkMap = new Dictionary<Vector3Int, ObjChunk>();
+
+        float inv = 1f / Mathf.Max(0.0001f, EffectiveChunkSize());
+        var cell = new Vector3Int(
+            Mathf.FloorToInt(placement.pos.x * inv),
+            Mathf.FloorToInt(placement.pos.y * inv),
+            Mathf.FloorToInt(placement.pos.z * inv));
+
+        if (!rt.objChunkMap.TryGetValue(cell, out var chunk))
+        {
+            chunk = new ObjChunk { cell = cell };
+            rt.objChunkMap[cell] = chunk;
+        }
+
+        chunk.treePlacements.Add(placement);
+        if (placement.go != null)
+            chunk.objects.Add(placement.go);
+
+        Vector3 pos = placement.pos;
+        if (!chunk.hasBounds) { chunk.min = chunk.max = pos; chunk.hasBounds = true; }
+        else { chunk.min = Vector3.Min(chunk.min, pos); chunk.max = Vector3.Max(chunk.max, pos); }
     }
 
     /// <summary>
@@ -1785,8 +1968,9 @@ public class FoliageByColour : MonoBehaviour
             { best.rejSpacing++; continue; }
 
             Vector3 up = best.rule.orient == FoliageOrientMode.Upright ? radial : hit.normal;
+            float yawDeg = Random.value * 360f;
             Quaternion rot = Quaternion.FromToRotation(Vector3.up, up)
-                             * Quaternion.AngleAxis(Random.value * 360f, Vector3.up);
+                             * Quaternion.AngleAxis(yawDeg, Vector3.up);
             float scale = Random.Range(best.rule.scaleRange.x, best.rule.scaleRange.y);
             Vector3 placePos = pos + hit.normal * best.rule.surfaceOffset;
 
@@ -1800,13 +1984,8 @@ public class FoliageByColour : MonoBehaviour
                 var prefab = best.prefabs[Random.Range(0, best.prefabs.Count)];
                 if (prefab != null)
                 {
-                    var go = Object.Instantiate(prefab, placePos, rot, best.poolContainer);
-                    go.transform.localScale = prefab.transform.localScale * scale;
-                    Stargrave.CameraOcclusion.FoliageOccluder.EnsureOn(go);
-                    AddPooledToChunk(best, go, placePos);
-                    PooledInstanceCreated?.Invoke(go, best.rule != null ? best.rule.name : string.Empty);
-                    BeginPooledPhaseIn(go.transform);
-                    if (++instThisFrame >= maxInstantiatesPerFrame)
+                    var res = PlacePooledVisual(best, prefab, placePos, up, yawDeg * Mathf.Deg2Rad, scale);
+                    if (res == PlaceResult.PlacedPooled && ++instThisFrame >= maxInstantiatesPerFrame)
                     {
                         instThisFrame = 0;
                         budget = 0;
@@ -1836,11 +2015,15 @@ public class FoliageByColour : MonoBehaviour
         bool cull = !disableCulling;
         // Frustum plus camera-distance: grass/object draw distances (or built-in defaults).
         float gdd = grassDrawDistance > 0f ? grassDrawDistance : DefaultGrassDrawDistance;
-        float odd = objectDrawDistance > 0f ? objectDrawDistance : DefaultObjectDrawDistance;
+        float treeDd = treeDrawDistance > 0f ? treeDrawDistance : DefaultTreeDrawDistance;
+        float rockDd = rockDrawDistance > 0f ? rockDrawDistance : DefaultRockDrawDistance;
 
         Camera cam = null;
         Vector3 camPos = Vector3.zero;
         Plane[] planes = null;
+        Vector3 planetCenter = _center;
+        float surfaceRadius = _baseRadius;
+        bool horizonCull = false;
         if (cull)
         {
             cam = ResolveCamera();
@@ -1854,6 +2037,22 @@ public class FoliageByColour : MonoBehaviour
                 camPos = cam.transform.position;
                 GeometryUtility.CalculateFrustumPlanes(cam, _frustumPlanes); // once per frame, reused by all chunks
                 planes = _frustumPlanes;
+                if (_planet != null)
+                {
+                    planetCenter = _planet.transform.position;
+                    surfaceRadius = PlanetHorizonCulling.SampleSurfaceRadius(
+                        _planet, planetCenter, camPos, _baseRadius);
+                    horizonCull = surfaceRadius > 1f;
+                    // Cap draw distance near the geometric horizon so far-limb chunks never qualify.
+                    float horizon = PlanetHorizonCulling.ApproximateHorizonDistance(
+                        (camPos - planetCenter).magnitude, surfaceRadius);
+                    // Generous floor: a tight horizonCap left mid-range rings of missing grass.
+                    float horizonCap = Mathf.Max(160f, horizon * 2.4f);
+                    gdd = Mathf.Min(gdd, horizonCap);
+                    // Trees keep the far object ring; rocks stay shorter even after horizon bump.
+                    treeDd = Mathf.Min(treeDd, horizonCap * 1.55f);
+                    rockDd = Mathf.Min(rockDd, Mathf.Min(horizonCap * 1.1f, treeDd));
+                }
             }
         }
 
@@ -1870,24 +2069,50 @@ public class FoliageByColour : MonoBehaviour
         float phaseStartScale = Mathf.Clamp(phaseInStartScale, 0f, 0.95f);
         float now = Time.time;
 
+        _treeNearInstThisFrame = 0;
+        _treeImpostorBudgetRemaining = maxTreeImpostorsPerFrame > 0 ? maxTreeImpostorsPerFrame : 2500;
+        if (treeImpostorsEnabled)
+            FoliageTreeImpostorDraw.ClearBatches();
+
         for (int i = 0; i < _runtimes.Count; i++)
         {
             var rt = _runtimes[i];
             if (rt.gpu != null)
             {
                 rt.gpu.Draw(_layer, cull, camPos, planes, gdd, SmallFrustumMargin, cam, ref grassBudget,
-                            phaseEnabled, phaseDur, phaseStartScale, now);
+                            phaseEnabled, phaseDur, phaseStartScale, now,
+                            _planet, planetCenter, surfaceRadius, horizonCull);
             }
             else if (rt.objChunks != null)
             {
-                CullPooled(rt, cull, camPos, planes, odd);
+                if (treeImpostorsEnabled && !rt.isRockRule)
+                {
+                    CullTreeRings(rt, cull, camPos, planes, _planet, planetCenter, surfaceRadius, horizonCull);
+                }
+                else
+                {
+                    float odd = rt.isRockRule ? rockDd : treeDd;
+                    CullPooled(rt, cull, camPos, planes, odd, _planet, planetCenter, surfaceRadius, horizonCull);
+                }
             }
         }
+
+        if (treeImpostorsEnabled)
+            FoliageTreeImpostorDraw.Flush(_layer);
     }
 
     float EffectiveChunkSize() => chunkSize > 0f ? chunkSize : DefaultChunkSize;
 
     float EffectivePhaseInDuration() => phaseInDuration > 0f ? phaseInDuration : DefaultPhaseInDuration;
+
+    static bool IsRockRuleName(string name)
+    {
+        if (string.IsNullOrEmpty(name))
+            return false;
+        return name.IndexOf("rock", System.StringComparison.OrdinalIgnoreCase) >= 0
+            || name.IndexOf("stone", System.StringComparison.OrdinalIgnoreCase) >= 0
+            || name.IndexOf("boulder", System.StringComparison.OrdinalIgnoreCase) >= 0;
+    }
 
     // ---- Pooled (GameObject) phase-in: a centralized list of objects currently growing in. ----
     // Entries are added ONLY at genuine first instantiate (TryPlace / streaming scatter), never on a cull/
@@ -2202,8 +2427,8 @@ public class FoliageByColour : MonoBehaviour
     // not into the sky/ground). Returns the raw player position when look-ahead is disabled or no camera.
     Vector3 ComputeSortBiasPos(Vector3 playerPos)
     {
-        // 0 => auto default; negative => disabled (pure nearest-first).
-        float ahead = loadAheadDistance < 0f ? 0f : (loadAheadDistance > 0f ? loadAheadDistance : DefaultLoadAhead);
+        // Positive loadAheadDistance biases along look; 0 / negative = pure nearest-first.
+        float ahead = loadAheadDistance > 0f ? loadAheadDistance : DefaultLoadAhead;
         if (ahead <= 0f)
             return playerPos;
         var cam = ResolveCamera();
@@ -2235,13 +2460,13 @@ public class FoliageByColour : MonoBehaviour
 
     // Hard per-frame ceiling on streaming raycasts AFTER multipliers. This is the knob that kills the periodic
     // stutter: it bounds the absolute spike no matter what the warmup/near multipliers ask for. 0 => auto
-    // (1.5 × scatterPerFrame): a modest boost for pop-in that never explodes into a full multiplied burst.
+    // (2.75 × scatterPerFrame): faster catch-up without uncapping the near/warmup multipliers entirely.
     int EffectiveMaxStreamRaysPerFrame()
     {
         int baseBudget = Mathf.Max(500, scatterPerFrame);
         if (maxStreamRaysPerFrame > 0)
             return Mathf.Max(baseBudget, maxStreamRaysPerFrame);
-        return Mathf.CeilToInt(baseBudget * 1.5f);
+        return Mathf.CeilToInt(baseBudget * 2.75f);
     }
 
     // Hard per-frame ceiling on EXPENSIVE surface evaluations (land attempts that run the full normal +
@@ -2260,7 +2485,7 @@ public class FoliageByColour : MonoBehaviour
         // ceiling is therefore higher than the old raycast-era value so land fills in faster. The Burst
         // consumer also boosts this for near cells (see ScatterCellJobbed). 0 = auto (scatterPerFrame / 6,
         // clamped 1500..6000); set explicitly to override.
-        return Mathf.Clamp(baseBudget / 6, 1500, 6000);
+        return Mathf.Clamp(baseBudget / 4, 2500, 10000);
     }
 
     // Eases the live budget multiplier toward the target by a fixed step per frame, so a cell becoming "near"
@@ -2510,6 +2735,15 @@ public class FoliageByColour : MonoBehaviour
                 for (int o = 0; o < objs.Count; o++)
                     if (objs[o] != null)
                         Object.Destroy(objs[o]);
+                var placements = oc.treePlacements;
+                for (int p = 0; p < placements.Count; p++)
+                {
+                    GameObject go = placements[p].go;
+                    if (go != null && !objs.Contains(go))
+                        Object.Destroy(go);
+                }
+                placements.Clear();
+                objs.Clear();
                 rt.objChunkMap.Remove(cell);
                 rt.objChunks?.Remove(oc);
             }
@@ -2753,8 +2987,9 @@ public class FoliageByColour : MonoBehaviour
             if (!occupied[bestIdx].Add(scell)) { best.rejSpacing++; continue; }
 
             Vector3 up = best.rule.orient == FoliageOrientMode.Upright ? radial : hitNormal;
+            float yawDeg = Random.value * 360f;
             Quaternion rot = Quaternion.FromToRotation(Vector3.up, up)
-                             * Quaternion.AngleAxis(Random.value * 360f, Vector3.up);
+                             * Quaternion.AngleAxis(yawDeg, Vector3.up);
             float scale = Random.Range(best.rule.scaleRange.x, best.rule.scaleRange.y);
             Vector3 placePos = pos + hitNormal * best.rule.surfaceOffset;
 
@@ -2768,13 +3003,8 @@ public class FoliageByColour : MonoBehaviour
                 var prefab = best.prefabs[Random.Range(0, best.prefabs.Count)];
                 if (prefab != null)
                 {
-                    var go = Object.Instantiate(prefab, placePos, rot, best.poolContainer);
-                    go.transform.localScale = prefab.transform.localScale * scale;
-                    Stargrave.CameraOcclusion.FoliageOccluder.EnsureOn(go);
-                    AddPooledToChunk(best, go, placePos);
-                    PooledInstanceCreated?.Invoke(go, best.rule != null ? best.rule.name : string.Empty);
-                    BeginPooledPhaseIn(go.transform);
-                    if (++_streamInstCount >= maxInstantiatesPerFrame)
+                    var res = PlacePooledVisual(best, prefab, placePos, up, yawDeg * Mathf.Deg2Rad, scale);
+                    if (res == PlaceResult.PlacedPooled && ++_streamInstCount >= maxInstantiatesPerFrame)
                     {
                         _streamInstCount = 0;
                         _streamRayCount = 0;
@@ -3019,8 +3249,9 @@ public class FoliageByColour : MonoBehaviour
             if (!occupied[bestIdx].Add(scell)) { best.rejSpacing++; continue; }
 
             Vector3 up = best.rule.orient == FoliageOrientMode.Upright ? radial : hitNormal;
+            float yawDeg = Random.value * 360f;
             Quaternion rot = Quaternion.FromToRotation(Vector3.up, up)
-                             * Quaternion.AngleAxis(Random.value * 360f, Vector3.up);
+                             * Quaternion.AngleAxis(yawDeg, Vector3.up);
             float scale = Random.Range(best.rule.scaleRange.x, best.rule.scaleRange.y);
             Vector3 placePos = pos + hitNormal * best.rule.surfaceOffset;
 
@@ -3034,12 +3265,8 @@ public class FoliageByColour : MonoBehaviour
                 var prefab = best.prefabs[Random.Range(0, best.prefabs.Count)];
                 if (prefab != null)
                 {
-                    var go = Object.Instantiate(prefab, placePos, rot, best.poolContainer);
-                    go.transform.localScale = prefab.transform.localScale * scale;
-                    Stargrave.CameraOcclusion.FoliageOccluder.EnsureOn(go);
-                    AddPooledToChunk(best, go, placePos);
-                    BeginPooledPhaseIn(go.transform);
-                    if (++_streamInstCount >= maxInstantiatesPerFrame)
+                    var res = PlacePooledVisual(best, prefab, placePos, up, yawDeg * Mathf.Deg2Rad, scale);
+                    if (res == PlaceResult.PlacedPooled && ++_streamInstCount >= maxInstantiatesPerFrame)
                     {
                         _streamInstCount = 0;
                         AdvanceStreamRamp();
@@ -3083,28 +3310,150 @@ public class FoliageByColour : MonoBehaviour
         }
     }
 
-    // Frustum-culls pooled objects per chunk: a chunk is active when it is inside the camera frustum
-    // expanded by a small border, otherwise it is deactivated. 'drawDistance' is effectively unlimited
-    // (see Update) so distance never removes an in-view chunk. SetActive() is only called when a chunk
-    // crosses the visibility threshold, so steady-state cost is one frustum test per chunk (not per
-    // object) with zero churn.
-    void CullPooled(RuleRuntime rt, bool cull, Vector3 camPos, Plane[] planes, float drawDistance)
+    // Near prefab / mid-far impostor rings for trees. Cached matrices + shared impostor budget.
+    void CullTreeRings(
+        RuleRuntime rt,
+        bool cull,
+        Vector3 camPos,
+        Plane[] planes,
+        Planet planet,
+        Vector3 planetCenter,
+        float surfaceRadius,
+        bool horizonCull)
     {
         var list = rt.objChunks;
+        if (list == null || list.Count == 0)
+            return;
 
-        // Stamp distances and sort nearest-first so, when many chunks change state in one frame (e.g. on load
-        // or a big camera jump), the nearest objects activate before far ones. In-place sort + cached comparer
-        // => no per-frame allocation. SetActive is still only called on a visibility TRANSITION.
         for (int i = 0; i < list.Count; i++)
             list[i].sortDist = (list[i].center - camPos).sqrMagnitude;
         if (list.Count > 1)
             list.Sort(ObjNearestFirst);
 
-        // Hysteresis: activate a chunk when it enters the (margin-expanded) view region, but only deactivate
-        // once it leaves a slightly LARGER region. This makes objects ready just outside the visible edge
-        // (no pop-in on rotate) and prevents on/off flicker for chunks sitting on the boundary.
+        float onMargin = objectFrustumMargin > 0f ? objectFrustumMargin : DefaultObjectFrustumMargin;
+        float nearOn = Mathf.Max(10f, treeNearDistance);
+        float nearOff = nearOn + Mathf.Max(0f, treeNearHysteresis);
+        float midD = Mathf.Max(nearOff + 1f, treeMidDistance);
+        float farD = Mathf.Max(midD + 1f, treeFarDistance);
+        float farDensity = Mathf.Clamp01(treeFarDensity);
+        float nearOnSq = nearOn * nearOn;
+        float nearOffSq = nearOff * nearOff;
+        float midSq = midD * midD;
+        float farSq = farD * farD;
+
+        for (int i = 0; i < list.Count; i++)
+        {
+            var chunk = list[i];
+            bool chunkVisible = true;
+            if (cull)
+            {
+                float maxD = farD + onMargin + chunk.radius;
+                // Frustum + distance; limb-only past near (skip expensive terrain LoS samples).
+                chunkVisible = chunk.sortDist <= maxD * maxD
+                    && (planes == null || GeometryUtility.TestPlanesAABB(planes, Expanded(chunk.bounds, onMargin)));
+                if (chunkVisible && horizonCull && chunk.sortDist > nearOffSq)
+                {
+                    chunkVisible = PlanetHorizonCulling.IsVisible(
+                        camPos, planetCenter, surfaceRadius, chunk.center, sticky: true);
+                }
+            }
+
+            var placements = chunk.treePlacements;
+            for (int p = 0; p < placements.Count; p++)
+            {
+                TreePlacement tp = placements[p];
+                float dSq = (tp.pos - camPos).sqrMagnitude;
+
+                if (!chunkVisible)
+                {
+                    if (tp.go != null && tp.nearActive)
+                    {
+                        tp.go.SetActive(false);
+                        tp.nearActive = false;
+                        placements[p] = tp;
+                    }
+                    continue;
+                }
+
+                bool wantNear = tp.nearActive ? dSq <= nearOffSq : dSq <= nearOnSq;
+                if (wantNear)
+                {
+                    if (tp.go == null)
+                        TryInstantiateTreeNear(rt, ref tp, chargeFrameBudget: true);
+                    if (tp.go != null)
+                    {
+                        if (!tp.nearActive)
+                            tp.go.SetActive(true);
+                        if (!tp.goInChunkObjects)
+                        {
+                            chunk.objects.Add(tp.go);
+                            tp.goInChunkObjects = true;
+                        }
+                        tp.nearActive = true;
+                        placements[p] = tp;
+                        continue;
+                    }
+                    if (_treeImpostorBudgetRemaining > 0)
+                    {
+                        FoliageTreeImpostorDraw.Add(tp.matrix);
+                        _treeImpostorBudgetRemaining--;
+                    }
+                    continue;
+                }
+
+                if (tp.nearActive && tp.go != null)
+                {
+                    tp.go.SetActive(false);
+                    tp.nearActive = false;
+                }
+
+                if (_treeImpostorBudgetRemaining <= 0)
+                {
+                    placements[p] = tp;
+                    continue;
+                }
+
+                if (dSq <= midSq)
+                {
+                    FoliageTreeImpostorDraw.Add(tp.matrix);
+                    _treeImpostorBudgetRemaining--;
+                }
+                else if (dSq <= farSq)
+                {
+                    float u = (tp.farKey & 0xFFFF) * (1f / 65535f);
+                    if (u < farDensity)
+                    {
+                        FoliageTreeImpostorDraw.Add(tp.matrix);
+                        _treeImpostorBudgetRemaining--;
+                    }
+                }
+
+                placements[p] = tp;
+            }
+        }
+    }
+    void CullPooled(
+        RuleRuntime rt,
+        bool cull,
+        Vector3 camPos,
+        Plane[] planes,
+        float drawDistance,
+        Planet planet,
+        Vector3 planetCenter,
+        float surfaceRadius,
+        bool horizonCull)
+    {
+        var list = rt.objChunks;
+
+        for (int i = 0; i < list.Count; i++)
+            list[i].sortDist = (list[i].center - camPos).sqrMagnitude;
+        if (list.Count > 1)
+            list.Sort(ObjNearestFirst);
+
         float onMargin = objectFrustumMargin > 0f ? objectFrustumMargin : DefaultObjectFrustumMargin;
         float offMargin = onMargin + Mathf.Max(4f, onMargin * 0.4f);
+        // Reveal nearest culled chunks first when many become visible at once (turn / crest a ridge).
+        int activateBudget = 28;
 
         for (int i = 0; i < list.Count; i++)
         {
@@ -3112,21 +3461,33 @@ public class FoliageByColour : MonoBehaviour
             bool want;
             if (!cull)
             {
-                want = true; // culling off => everything visible
+                want = true;
             }
             else if (chunk.active)
             {
-                // Stay active until the chunk leaves the larger off-region (distance OR frustum).
                 float maxD = drawDistance + offMargin + chunk.radius;
                 want = chunk.sortDist <= maxD * maxD
-                       && (planes == null || GeometryUtility.TestPlanesAABB(planes, Expanded(chunk.bounds, offMargin)));
+                       && (planes == null || GeometryUtility.TestPlanesAABB(planes, Expanded(chunk.bounds, offMargin)))
+                       && (!horizonCull ||
+                           PlanetHorizonCulling.IsVisibleInWorld(
+                               planet, planetCenter, surfaceRadius, camPos, chunk.center, sticky: true));
             }
             else
             {
-                // Activate when the chunk enters the on-region (in range AND inside the margin-expanded frustum).
                 float maxD = drawDistance + onMargin + chunk.radius;
+                // sticky for appear too — foliage should not wait for a harsh clear-air LoS to fill holes.
                 want = chunk.sortDist <= maxD * maxD
-                       && (planes == null || GeometryUtility.TestPlanesAABB(planes, Expanded(chunk.bounds, onMargin)));
+                       && (planes == null || GeometryUtility.TestPlanesAABB(planes, Expanded(chunk.bounds, onMargin)))
+                       && (!horizonCull ||
+                           PlanetHorizonCulling.IsVisibleInWorld(
+                               planet, planetCenter, surfaceRadius, camPos, chunk.center, sticky: true));
+                if (want)
+                {
+                    if (activateBudget <= 0)
+                        want = false;
+                    else
+                        activateBudget--;
+                }
             }
 
             if (want == chunk.active)

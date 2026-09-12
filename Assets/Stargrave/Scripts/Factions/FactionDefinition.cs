@@ -10,6 +10,11 @@ public class FactionDefinition : ScriptableObject
 
     public Color uiColor = Color.white;
 
+    [Header("Identity (optional overrides; runtime fills gaps)")]
+    public FactionBuildBias preferredBuildBias = FactionBuildBias.Balanced;
+    public FactionAggression preferredAggression = FactionAggression.Balanced;
+    public bool usePreferredPersonality;
+
     [Header("World Pressure")]
     [Tooltip("How fast this faction gains influence over time (per minute).")]
     public float influencePerMinute = 1.0f;

@@ -178,7 +178,8 @@ Shader "Stargrave/Procedural Planet Clouds"
                 float3 centerToSurface = input.positionWS - _PlanetCenterWS;
                 float radiusAtSurface = length(centerToSurface);
                 float3 radial = centerToSurface / max(radiusAtSurface, 0.001);
-                bool cameraOutside = length(rayOrigin - _PlanetCenterWS) >= _CloudOuterRadius;
+                float cameraRadius = length(rayOrigin - _PlanetCenterWS);
+                bool cameraOutside = cameraRadius >= _CloudOuterRadius;
 
                 // One face of the proxy sphere is enough. This avoids drawing the raymarch twice
                 // while still selecting the outward intersection when the camera is inside the shell.
@@ -189,6 +190,23 @@ Shader "Stargrave/Procedural Planet Clouds"
                 float2 outerHit = RaySphere(rayOrigin, rayDirection, _PlanetCenterWS, _CloudOuterRadius);
                 float marchStart = max(0.0, outerHit.x);
                 float marchEnd = outerHit.y;
+                // Do not march through the planet to the far cloud shell — that makes the
+                // whole sphere show through the world from space. Stay in the near band.
+                float2 innerHit = RaySphere(rayOrigin, rayDirection, _PlanetCenterWS, _CloudInnerRadius);
+                if (innerHit.y > innerHit.x)
+                {
+                    if (cameraOutside || cameraRadius >= _CloudInnerRadius)
+                    {
+                        if (innerHit.x > marchStart)
+                            marchEnd = min(marchEnd, innerHit.x);
+                        else if (innerHit.y > marchStart)
+                            marchStart = max(marchStart, innerHit.y);
+                    }
+                    else
+                    {
+                        marchStart = max(marchStart, innerHit.y);
+                    }
+                }
                 if (marchEnd <= marchStart)
                     discard;
 
@@ -210,7 +228,8 @@ Shader "Stargrave/Procedural Planet Clouds"
                     float t = marchStart + (i + 0.5) * stepLength;
                     float3 samplePosition = rayOrigin + rayDirection * t;
                     float sampleRadius = length(samplePosition - _PlanetCenterWS);
-                    if (sampleRadius <= _CloudInnerRadius || sampleRadius >= _CloudOuterRadius)
+                    // Inclusive outer bound: proxy mesh sits on _CloudOuterRadius.
+                    if (sampleRadius < _CloudInnerRadius || sampleRadius > _CloudOuterRadius + 0.5)
                         continue;
 
                     float sampleDensity = CloudDensity(samplePosition);
@@ -273,7 +292,9 @@ Shader "Stargrave/Procedural Planet Clouds"
         Pass
         {
             Name "CloudFullscreen"
-            Tags { "LightMode" = "Always" }
+            // NOT "Always": Scene View draws Always on the proxy mesh; this pass
+            // samples unbound _BlitTexture (= magenta). Blit still uses pass index 1.
+            Tags { "LightMode" = "ProceduralPlanetCloudsBlit" }
 
             ZWrite Off
             ZTest Always

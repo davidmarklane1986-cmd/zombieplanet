@@ -56,6 +56,14 @@ public sealed class StargraveFrontendBootstrap : MonoBehaviour
         "All clear. Try not to trip on the curvature."
     };
 
+    static readonly string[] SplashFactionBootLines =
+    {
+        "Assigning faction drama queens to dry mainland...",
+        "Prospecting wood & stone without walking off the planet...",
+        "Teaching capsules not to live inside cliffs...",
+        "Packing town halls where haulers can actually climb home..."
+    };
+
     [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.AfterSceneLoad)]
     static void TrySpawnForGameplayScene()
     {
@@ -1144,6 +1152,8 @@ public sealed class StargraveFrontendBootstrap : MonoBehaviour
         SetLoadingStatus("Warming up the sarcasm engines...");
         StartLoadingTaglinePulse();
         StartLoadingSpinner();
+        // Hand off from the BeforeSceneLoad splash now that the full joke deck is live.
+        StargraveEarlyBootSplash.Dismiss();
     }
 
     void EnterMenuState(bool afterGameOver)
@@ -1349,11 +1359,41 @@ public sealed class StargraveFrontendBootstrap : MonoBehaviour
         while (planet != null && !planet.IsGenerated && waited < PlanetWaitTimeoutSeconds)
         {
             waited += Time.unscaledDeltaTime;
+            TopUpLoadingJokes(SplashWhilePlanetBuilding);
             yield return null;
         }
 
         if (planet != null && !planet.IsGenerated)
             SetLoadingStatus("Planet is shy - opening menu anyway. Bring snacks.");
+
+        EnqueueJokeSet(SplashFactionBootLines, shuffle: true);
+
+        // Keep jokes rolling while deferred faction/prospect boot spreads across frames.
+        // Stay on the loading screen while boot is still running (no silent early exit).
+        float factionWait = 0f;
+        const float factionTimeout = 180f;
+        while (factionWait < factionTimeout)
+        {
+            FactionSimulation sim = FactionSimulation.Instance;
+            if (sim == null)
+                sim = FindFirstObjectByType<FactionSimulation>();
+
+            if (sim != null && sim.IsWorldSimReady)
+                break;
+
+            if (sim != null && !sim.IsWorldSimBooting && !sim.IsWorldSimReady &&
+                planet != null && planet.IsGenerated)
+                sim.TryStart();
+
+            // Don't count time while a boot coroutine is actively working.
+            if (sim == null || !sim.IsWorldSimBooting)
+                factionWait += Time.unscaledDeltaTime;
+            else
+                factionWait = 0f;
+
+            TopUpLoadingJokes(SplashFactionBootLines);
+            yield return null;
+        }
 
         string[] finishing = CopyAndShuffle(SplashFinishingTouches);
         for (int i = 0; i < finishing.Length; i++)
@@ -1363,6 +1403,7 @@ public sealed class StargraveFrontendBootstrap : MonoBehaviour
         yield return CoWaitForLoadingStatusQueueIdle();
         StopLoadingTaglinePulse();
         StopLoadingSpinner();
+        StargraveEarlyBootSplash.Dismiss();
 
         if (s_AutoStartNextBoot)
         {
@@ -1373,6 +1414,16 @@ public sealed class StargraveFrontendBootstrap : MonoBehaviour
         {
             EnterMenuState(false);
         }
+    }
+
+    void TopUpLoadingJokes(string[] pool)
+    {
+        if (pool == null || pool.Length == 0)
+            return;
+        // Only refill when the deal/hold queue is idle so we keep looping without flooding.
+        if (_loadingStatusQueue.Count > 0 || _loadingStatusQueueCoroutine != null)
+            return;
+        SetLoadingStatus(PickRandomLine(pool));
     }
 
     void EnqueueJokeSet(string[] lines, bool shuffle)

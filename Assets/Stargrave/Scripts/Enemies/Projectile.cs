@@ -226,6 +226,9 @@ public class Projectile : MonoBehaviour
         if (TryDamageZombie(other, hitPoint, hitNormal))
             return;
 
+        if (TryDamageFactionUnit(other, hitPoint, hitNormal))
+            return;
+
         if (despawnOnWorldHit)
         {
             if (playImpactOnHit)
@@ -266,6 +269,38 @@ public class Projectile : MonoBehaviour
             PlayerShooting.NotifyHitConfirmed();
         }
 
+        if (playImpactOnHit)
+            PlayImpact(hitPoint, hitNormal);
+        Destroy(gameObject);
+        return true;
+    }
+
+    bool TryDamageFactionUnit(Collider other, Vector3 hitPoint, Vector3 hitNormal)
+    {
+        if (!Stargrave.Rts2.Rts2UnitSim.HasInstance)
+            return false;
+
+        int dmg = GetDamageAtPoint(hitPoint);
+        Transform player = RuntimeSceneRefs.GetPlayerTransform(0.5f);
+        if (player == null)
+            return false;
+
+        var proxy = other.GetComponentInParent<Stargrave.Rts2.Rts2UnitHitProxy>();
+        bool hit = false;
+        if (proxy != null && proxy.UnitIndex >= 0)
+        {
+            if (dmg > 0)
+                hit = Stargrave.Rts2.Rts2UnitSim.Instance.TryDamageUnitFromPlayer(proxy.UnitIndex, dmg, player);
+        }
+        else if (dmg > 0)
+        {
+            hit = Stargrave.Rts2.Rts2UnitSim.Instance.ApplyPlayerDamageAt(hitPoint, 1.6f, dmg, player);
+        }
+
+        if (!hit)
+            return false;
+
+        PlayerShooting.NotifyHitConfirmed();
         if (playImpactOnHit)
             PlayImpact(hitPoint, hitNormal);
         Destroy(gameObject);

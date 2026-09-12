@@ -94,6 +94,6 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 2e6af3cec9b06f840b8cf0ac484ec1bd, type: 3}
   m_Name: ProceduralPlanetCloudsRendererFeature
   m_EditorClassIdentifier: 
-  settings:
-    renderPassEvent: 550
-    useFullscreenPass: 0
+    settings:
+      renderPassEvent: 550
+      useFullscreenPass: 0

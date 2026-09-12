@@ -1,36 +1,15 @@
 using UnityEngine;
 
 /// <summary>
-/// Render-only view culling for a zombie, mirroring the foliage system's rule
-/// (<see cref="FoliageByColour"/>): an object draws when it is inside the gameplay camera's frustum
-/// expanded by a small border, otherwise it is culled. Here that toggles ONLY rendering — the zombie's
-/// AI / movement / surface-stick / attack (driven by <see cref="ZombieAI"/> in FixedUpdate) keep running
-/// off-screen, exactly like vegetation keeps existing while not drawn.
-///
-/// What it does when OUT of view:
-///  • disables the zombie's Renderer(s) (SkinnedMeshRenderer / MeshRenderer) so nothing is drawn, and
-///  • the Animator is set to <see cref="AnimatorCullingMode.CullCompletely"/> so it stops spending CPU
-///    animating off-screen. This is safe ONLY because zombie movement is code-driven (Rigidbody forces /
-///    velocity in <see cref="ZombieAI.FixedUpdate"/>) with root motion OFF — pausing animation does not
-///    freeze movement. (If movement were root-motion driven we'd use CullUpdateTransforms instead.)
-///
-/// The check is THROTTLED (a few times a second, with a per-instance random phase) and the camera +
-/// frustum planes are computed ONCE PER FRAME and shared across every zombie, so this never does
-/// expensive per-frame work per zombie. It deliberately does NOT touch the GameObject's active state,
-/// the ZombieAI behaviour, or the performance tiers — purely a render-visibility optimization.
+/// Render-only view culling for a zombie: frustum + planet horizon (not Unity baked occlusion).
+/// AI / movement keep running off-screen.
 /// </summary>
 [DisallowMultipleComponent]
 public class ZombieVisibilityCuller : MonoBehaviour
 {
-    // Frustum border (world units). Matches FoliageByColour's pooled-object border (DefaultObjectFrustumMargin = 4):
-    // a zombie shows when inside the camera frustum expanded by this small margin, else it is culled. The
-    // margin activates it slightly BEFORE it enters the visible frustum so it doesn't pop in when you turn.
+    // Frustum border (world units). Matches FoliageByColour's pooled-object border.
     const float OnMargin = 4f;
-    // Larger border to LEAVE view than to enter it — same hysteresis idea as FoliageByColour.CullPooled,
-    // so a zombie on the exact view edge doesn't flicker on/off.
     const float OffMargin = OnMargin + 4f;
-
-    // Re-evaluate visibility a few times a second (staggered). Animator stays AlwaysAnimate.
     const float CheckInterval = 0.15f;
 
     Renderer[] _renderers;
@@ -38,11 +17,14 @@ public class ZombieVisibilityCuller : MonoBehaviour
     bool _visible = true;
     bool _initialized;
 
-    // ---- Shared per-frame camera + frustum cache (computed once per frame, reused by ALL zombies) ----
     static int s_FrameStamp = -1;
     static Camera s_Cam;
     static bool s_HasCam;
     static readonly Plane[] s_Planes = new Plane[6];
+    static Planet s_Planet;
+    static Vector3 s_PlanetCenter;
+    static float s_SurfaceRadius;
+    static bool s_HasHorizon;
 
     public bool IsShown => _visible;
 
@@ -58,7 +40,6 @@ public class ZombieVisibilityCuller : MonoBehaviour
         if (_initialized)
             return;
         _initialized = true;
-
         _renderers = GetComponentsInChildren<Renderer>(true);
     }
 
@@ -68,7 +49,7 @@ public class ZombieVisibilityCuller : MonoBehaviour
             return;
         _nextCheckTime = Time.time + CheckInterval;
 
-        if (!TryGetSharedFrustum(out Plane[] planes))
+        if (!TryGetSharedFrustum(out Plane[] planes, out Camera cam))
         {
             ApplyVisibility(true, force: false);
             return;
@@ -76,8 +57,19 @@ public class ZombieVisibilityCuller : MonoBehaviour
 
         Bounds b = ComputeWorldBounds();
         float margin = _visible ? OffMargin : OnMargin;
-        b.Expand(2f * margin);
-        bool want = GeometryUtility.TestPlanesAABB(planes, b);
+        Bounds expanded = b;
+        expanded.Expand(2f * margin);
+        bool want = GeometryUtility.TestPlanesAABB(planes, expanded);
+        if (want && s_HasHorizon)
+        {
+            want = PlanetHorizonCulling.IsVisibleInWorld(
+                s_Planet,
+                s_PlanetCenter,
+                s_SurfaceRadius,
+                cam.transform.position,
+                b.center,
+                sticky: _visible);
+        }
         ApplyVisibility(want, force: false);
     }
 
@@ -114,11 +106,9 @@ public class ZombieVisibilityCuller : MonoBehaviour
             if (r != null)
                 r.enabled = visible;
         }
-        // Animator enable/culling is owned by ZombieAI (distance + AlwaysAnimate while playing).
     }
 
-    // Resolves the gameplay camera and its frustum planes ONCE per frame, shared by every zombie instance.
-    static bool TryGetSharedFrustum(out Plane[] planes)
+    static bool TryGetSharedFrustum(out Plane[] planes, out Camera cam)
     {
         int frame = Time.frameCount;
         if (s_FrameStamp != frame)
@@ -127,15 +117,28 @@ public class ZombieVisibilityCuller : MonoBehaviour
             s_Cam = ResolveCamera(s_Cam);
             s_HasCam = s_Cam != null;
             if (s_HasCam)
+            {
                 GeometryUtility.CalculateFrustumPlanes(s_Cam, s_Planes);
+                if (s_Planet == null)
+                    s_Planet = Object.FindFirstObjectByType<Planet>();
+                if (s_Planet != null)
+                {
+                    s_PlanetCenter = s_Planet.transform.position;
+                    s_SurfaceRadius = PlanetHorizonCulling.SampleSurfaceRadius(
+                        s_Planet, s_PlanetCenter, s_Cam.transform.position, 1f);
+                    s_HasHorizon = s_SurfaceRadius > 1f;
+                }
+                else
+                {
+                    s_HasHorizon = false;
+                }
+            }
         }
         planes = s_Planes;
+        cam = s_Cam;
         return s_HasCam;
     }
 
-    // Same camera selection as FoliageByColour: keep the cached camera if still valid, else Camera.main,
-    // else the highest-depth on-screen camera (the one drawn on top). Duplicated (a few lines) on purpose
-    // so the foliage system is left completely untouched.
     static Camera ResolveCamera(Camera prev)
     {
         if (prev != null && prev.isActiveAndEnabled && prev.targetTexture == null)
@@ -148,7 +151,7 @@ public class ZombieVisibilityCuller : MonoBehaviour
 
     static Camera PickBestOnScreenCamera()
     {
-        var cams = Camera.allCameras; // enabled cameras only
+        var cams = Camera.allCameras;
         Camera best = null;
         float bestDepth = float.NegativeInfinity;
         for (int i = 0; i < cams.Length; i++)

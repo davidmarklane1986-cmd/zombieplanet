@@ -362,6 +362,12 @@ public sealed class ProceduralPlanetClouds : MonoBehaviour
         ActiveInstance = this;
         _dirty = true;
         ResetWeatherCycle();
+        // Drop any stale runtime material so Deferred ForwardOnly / DepthNormals changes apply.
+        if (_cloudMaterial != null)
+        {
+            DestroyObjectSafe(_cloudMaterial);
+            _cloudMaterial = null;
+        }
         EnsureCloudRenderer();
         ApplyCloudState(true);
     }
@@ -400,9 +406,12 @@ public sealed class ProceduralPlanetClouds : MonoBehaviour
         EnsureNoiseTextures();
         if (_cloudMaterial != null)
         {
-            _cloudMaterial.SetTexture(BaseNoiseTextureId, _baseNoiseTexture);
-            _cloudMaterial.SetTexture(DetailNoiseTextureId, _detailNoiseTexture);
-            _cloudMaterial.SetTexture(ShadowMapTextureId, _shadowMapTexture);
+            if (_baseNoiseTexture != null)
+                _cloudMaterial.SetTexture(BaseNoiseTextureId, _baseNoiseTexture);
+            if (_detailNoiseTexture != null)
+                _cloudMaterial.SetTexture(DetailNoiseTextureId, _detailNoiseTexture);
+            if (_shadowMapTexture != null)
+                _cloudMaterial.SetTexture(ShadowMapTextureId, _shadowMapTexture);
         }
         float now = Application.isPlaying ? Time.unscaledTime : -1f;
         bool due = _dirty || geometryChanged || !Application.isPlaying || updateFrequency <= 0f ||
@@ -643,9 +652,9 @@ public sealed class ProceduralPlanetClouds : MonoBehaviour
     {
         if (_cloudRenderer != null && _cloudMaterial != null && _cloudObject != null)
         {
-            _cloudRenderer.enabled = !useFullscreenVolume || enableShadows;
-            if (_cloudMaterial != null)
-                _cloudMaterial.SetShaderPassEnabled("UniversalForward", !useFullscreenVolume);
+            // Always re-bind — diagnostic menus / domain reloads can leave a probe material on.
+            _cloudRenderer.sharedMaterial = _cloudMaterial;
+            ApplyCloudRendererDrawMode(enableShadows);
             return;
         }
 
@@ -686,10 +695,8 @@ public sealed class ProceduralPlanetClouds : MonoBehaviour
         _cloudRenderer.lightProbeUsage = LightProbeUsage.Off;
         _cloudRenderer.reflectionProbeUsage = ReflectionProbeUsage.Off;
         _cloudRenderer.motionVectorGenerationMode = MotionVectorGenerationMode.ForceNoMotion;
+        // Draw mode (ShadowsOnly vs On) is set in ApplyCloudRendererDrawMode.
         _cloudRenderer.shadowCastingMode = ShadowCastingMode.Off;
-        // The proxy is hidden when the fullscreen volume is active, but remains
-        // available as a shadow-only fallback for the planet surface.
-        _cloudRenderer.enabled = !useFullscreenVolume || enableShadows;
 
         if (_propertyBlock == null)
             _propertyBlock = new MaterialPropertyBlock();
@@ -705,30 +712,73 @@ public sealed class ProceduralPlanetClouds : MonoBehaviour
             return;
         }
 
-        if (_cloudMaterial == null || _cloudMaterial.shader != shader)
+        if (_cloudMaterial == null ||
+            _cloudMaterial.shader != shader ||
+            _cloudMaterial.enableInstancing ||
+            _cloudMaterial.shader == null ||
+            _cloudMaterial.shader.name.Contains("InternalError"))
         {
             if (_cloudMaterial != null)
                 DestroyObjectSafe(_cloudMaterial);
             _cloudMaterial = new Material(shader)
             {
                 name = "ProceduralPlanetClouds (Runtime)",
-                // Draw immediately before the ocean. This lets the water blend over
-                // clouds when the camera is underwater while preserving terrain depth.
-                renderQueue = 2975,
-                enableInstancing = true
+                // After the ocean (3000) so from space clouds sit over water.
+                // Ocean ZWrite still hides clouds when viewing from underwater.
+                renderQueue = 3010,
+                // Shader has no instancing pragmas — leaving this on makes the
+                // outside of the sphere render as magenta/pink in the Scene view.
+                enableInstancing = false
             };
         }
 
         // Re-assert this on every refresh so a material surviving a domain reload
-        // cannot move the cloud layer back behind/after the ocean.
-        _cloudMaterial.renderQueue = 2975;
+        // cannot move the cloud layer back behind the ocean.
+        _cloudMaterial.renderQueue = 3010;
+        _cloudMaterial.enableInstancing = false;
         _cloudRenderer.sharedMaterial = _cloudMaterial;
         ResolvePlanetAndRadii();
         EnsureNoiseTextures();
-        _cloudMaterial.SetShaderPassEnabled("UniversalForward", !useFullscreenVolume);
-        _cloudMaterial.SetTexture(BaseNoiseTextureId, _baseNoiseTexture);
-        _cloudMaterial.SetTexture(DetailNoiseTextureId, _detailNoiseTexture);
-        _cloudMaterial.SetTexture(ShadowMapTextureId, _shadowMapTexture);
+        ApplyCloudRendererDrawMode(enableShadows);
+        if (_baseNoiseTexture != null)
+            _cloudMaterial.SetTexture(BaseNoiseTextureId, _baseNoiseTexture);
+        if (_detailNoiseTexture != null)
+            _cloudMaterial.SetTexture(DetailNoiseTextureId, _detailNoiseTexture);
+        if (_shadowMapTexture != null)
+            _cloudMaterial.SetTexture(ShadowMapTextureId, _shadowMapTexture);
+    }
+
+    /// <summary>
+    /// Fullscreen volume can hide the proxy Forward pass while playing. In the Scene
+    /// view / edit mode that pass often never runs, and a Forward-disabled mesh becomes
+    /// the magenta/pink shell — so edit mode always keeps the double-sided proxy draw.
+    /// </summary>
+    void ApplyCloudRendererDrawMode(bool shadows)
+    {
+        if (_cloudRenderer == null || _cloudMaterial == null)
+            return;
+
+        // Scene view + edit mode: always draw the proxy shell (Cull Off in shader).
+        bool hideProxyColour = useFullscreenVolume && Application.isPlaying;
+        _cloudMaterial.enableInstancing = false;
+        // Pass Name is "CloudVolume" (LightMode is UniversalForward).
+        _cloudMaterial.SetShaderPassEnabled("CloudVolume", !hideProxyColour);
+        _cloudMaterial.SetShaderPassEnabled("CloudShadowCaster", !hideProxyColour && shadows);
+
+        if (hideProxyColour)
+        {
+            _cloudRenderer.shadowCastingMode = shadows
+                ? ShadowCastingMode.ShadowsOnly
+                : ShadowCastingMode.Off;
+            _cloudRenderer.enabled = shadows;
+        }
+        else
+        {
+            _cloudRenderer.shadowCastingMode = shadows
+                ? ShadowCastingMode.On
+                : ShadowCastingMode.Off;
+            _cloudRenderer.enabled = true;
+        }
     }
 
     bool ResolvePlanetAndRadii()
@@ -808,8 +858,6 @@ public sealed class ProceduralPlanetClouds : MonoBehaviour
         float lodEnd = lodEndDistance > lodStart ? lodEndDistance : Mathf.Max(lodStart + 1f, _outerRadius * 8f);
         float cull = cullDistance > 0f ? cullDistance : Mathf.Max(lodEnd * 1.5f, _outerRadius * 14f);
         float lod = Mathf.Clamp01(Mathf.InverseLerp(lodStart, lodEnd, radialDistance));
-        _cloudRenderer.enabled = !useFullscreenVolume || enableShadows;
-        _cloudMaterial.SetShaderPassEnabled("UniversalForward", !useFullscreenVolume);
 
         int[] qualitySteps = { 10, 18, 30, 48 };
         int baseSteps = Mathf.Min(maximumRaySteps, qualitySteps[(int)quality]);
@@ -818,7 +866,7 @@ public sealed class ProceduralPlanetClouds : MonoBehaviour
         int shadowLevel = (int)shadowQuality;
         float configuredShadowDistance = shadowDistance > 0f ? shadowDistance : _outerRadius * 2.6f;
         bool shadows = enableShadows && radialDistance <= configuredShadowDistance;
-        _cloudRenderer.shadowCastingMode = shadows ? ShadowCastingMode.On : ShadowCastingMode.Off;
+        ApplyCloudRendererDrawMode(shadows);
 
         ResolveSunAndDayNight();
         Vector3 towardSun = ResolveSunDirection();
@@ -838,14 +886,18 @@ public sealed class ProceduralPlanetClouds : MonoBehaviour
         float nightAmount = Application.isPlaying ? Mathf.Clamp01(PlanetDayNightCycle.NightAmount) : 0f;
         float twilight = Application.isPlaying ? Mathf.Clamp01(PlanetDayNightCycle.TwilightAmount) : 0f;
         int debugMode = showShadowMap ? 2 : (showNoise ? 1 : 0);
-        EnsureShadowMapTexture();
-        if (_shadowMapTexture == null || _dirty ||
-            (Application.isPlaying && Time.unscaledTime >= _nextShadowMapUpdate))
+        // CPU shadow-map bake is only needed for casting / debug view.
+        if (enableShadows || showShadowMap)
         {
-            UpdateShadowMap(time);
-            _nextShadowMapUpdate = Application.isPlaying
-                ? Time.unscaledTime + Mathf.Max(0.05f, shadowMapUpdateFrequency)
-                : float.PositiveInfinity;
+            EnsureShadowMapTexture();
+            if (_shadowMapTexture == null || _dirty ||
+                (Application.isPlaying && Time.unscaledTime >= _nextShadowMapUpdate))
+            {
+                UpdateShadowMap(time);
+                _nextShadowMapUpdate = Application.isPlaying
+                    ? Time.unscaledTime + Mathf.Max(0.05f, shadowMapUpdateFrequency)
+                    : float.PositiveInfinity;
+            }
         }
 
         _propertyBlock.Clear();
@@ -874,9 +926,12 @@ public sealed class ProceduralPlanetClouds : MonoBehaviour
             windTurbulence));
         _propertyBlock.SetFloat(TimeOffsetId, time);
         _propertyBlock.SetColor(CloudColorId, cloudColor);
-        _propertyBlock.SetTexture(BaseNoiseTextureId, _baseNoiseTexture);
-        _propertyBlock.SetTexture(DetailNoiseTextureId, _detailNoiseTexture);
-        _propertyBlock.SetTexture(ShadowMapTextureId, _shadowMapTexture);
+        if (_baseNoiseTexture != null)
+            _propertyBlock.SetTexture(BaseNoiseTextureId, _baseNoiseTexture);
+        if (_detailNoiseTexture != null)
+            _propertyBlock.SetTexture(DetailNoiseTextureId, _detailNoiseTexture);
+        if (_shadowMapTexture != null)
+            _propertyBlock.SetTexture(ShadowMapTextureId, _shadowMapTexture);
         _propertyBlock.SetVector(SunDirectionId, new Vector4(towardSun.x, towardSun.y, towardSun.z, 0f));
         _propertyBlock.SetColor(SunColorId, sunColor);
         _propertyBlock.SetFloat(SunIntensityId, sunIntensity * Mathf.Lerp(0.12f, 1f, dayAmount));
@@ -896,9 +951,9 @@ public sealed class ProceduralPlanetClouds : MonoBehaviour
         _propertyBlock.SetFloat("_Twilight", twilight);
         _propertyBlock.SetFloat("_DayAmount", dayAmount);
         _propertyBlock.SetFloat("_NightAmount", nightAmount);
-        // Keep the runtime material itself in sync as well as the property block. This is
-        // important for URP configurations that batch transparent proxy passes without
-        // applying every non-texture property from a MaterialPropertyBlock.
+        // Keep the runtime material itself fully in sync. Deferred/transparent paths can
+        // ignore MaterialPropertyBlock for UnityPerMaterial floats and fall back to the
+        // shader's default radii (425–451), which miss a mesh scaled to ~385 and look empty/pink.
         _cloudMaterial.SetVector(PlanetCenterId, transform.position);
         _cloudMaterial.SetFloat(InnerRadiusId, _innerRadius);
         _cloudMaterial.SetFloat(OuterRadiusId, _outerRadius);
@@ -915,7 +970,46 @@ public sealed class ProceduralPlanetClouds : MonoBehaviour
         _cloudMaterial.SetFloat(CellularBreakupId, cellularBreakup);
         _cloudMaterial.SetFloat(CellularScaleId, cellularScale);
         _cloudMaterial.SetFloat(WarpStrengthId, warpStrength);
-        _cloudRenderer.SetPropertyBlock(_propertyBlock);
+        _cloudMaterial.SetFloat(VerticalProfileId, verticalProfile);
+        _cloudMaterial.SetVector(WindDirectionId, new Vector4(wind.x, wind.y, wind.z, 0f));
+        _cloudMaterial.SetVector(WindSpeedsId, new Vector4(
+            EffectiveCloudSpeed * lowLayerSpeed,
+            EffectiveCloudSpeed,
+            EffectiveCloudSpeed * highLayerSpeed,
+            windTurbulence));
+        _cloudMaterial.SetFloat(TimeOffsetId, time);
+        _cloudMaterial.SetColor(CloudColorId, cloudColor);
+        if (_baseNoiseTexture != null)
+            _cloudMaterial.SetTexture(BaseNoiseTextureId, _baseNoiseTexture);
+        if (_detailNoiseTexture != null)
+            _cloudMaterial.SetTexture(DetailNoiseTextureId, _detailNoiseTexture);
+        if (_shadowMapTexture != null)
+            _cloudMaterial.SetTexture(ShadowMapTextureId, _shadowMapTexture);
+        _cloudMaterial.SetVector(SunDirectionId, new Vector4(towardSun.x, towardSun.y, towardSun.z, 0f));
+        _cloudMaterial.SetColor(SunColorId, sunColor);
+        _cloudMaterial.SetFloat(SunIntensityId, sunIntensity * Mathf.Lerp(0.12f, 1f, dayAmount));
+        _cloudMaterial.SetFloat(SilverLiningId, silverLining * Mathf.Lerp(0.4f, 1f, dayAmount));
+        _cloudMaterial.SetFloat(NightIlluminationId, nightIllumination * nightAmount);
+        _cloudMaterial.SetVector(MoonDirectionId, new Vector4(towardMoon.x, towardMoon.y, towardMoon.z, 0f));
+        _cloudMaterial.SetColor(MoonColorId, moonColor);
+        _cloudMaterial.SetFloat(MoonAmountId, moonAmount * moonInfluence);
+        _cloudMaterial.SetFloat(InteriorDarknessId, interiorDarkness);
+        _cloudMaterial.SetFloat(ShadowStrengthId, shadows ? shadowStrength : 0f);
+        _cloudMaterial.SetFloat(ShadowSoftnessId, shadowSoftness);
+        _cloudMaterial.SetFloat(ShadowQualityId, shadowLevel);
+        _cloudMaterial.SetFloat(SampleCountId, sampleCount);
+        _cloudMaterial.SetFloat(LightSamplesId, lightSamples);
+        _cloudMaterial.SetFloat(DistanceLodId, lod);
+        _cloudMaterial.SetFloat(DebugModeId, debugMode);
+        _cloudMaterial.SetFloat("_Twilight", twilight);
+        _cloudMaterial.SetFloat("_DayAmount", dayAmount);
+        _cloudMaterial.SetFloat("_NightAmount", nightAmount);
+        _cloudMaterial.enableInstancing = false;
+        _cloudMaterial.renderQueue = 3010;
+        // Prefer material constants over MPB — Deferred can ignore UnityPerMaterial blocks.
+        _cloudRenderer.SetPropertyBlock(null);
+        _cloudRenderer.sharedMaterial = _cloudMaterial;
+        ApplyCloudRendererDrawMode(shadows);
         if (Application.isPlaying && !_reportedRuntimeState)
         {
             _reportedRuntimeState = true;
@@ -1076,7 +1170,8 @@ public sealed class ProceduralPlanetClouds : MonoBehaviour
         if (_baseNoiseTexture != null && _detailNoiseTexture != null &&
             _noiseTextureSeed == resolvedSeed && _noiseTextureResolution == resolution)
         {
-            EnsureShadowMapTexture();
+            if (enableShadows || showShadowMap)
+                EnsureShadowMapTexture();
             return;
         }
 
@@ -1123,8 +1218,11 @@ public sealed class ProceduralPlanetClouds : MonoBehaviour
         effectiveSeed = resolvedSeed;
         _noiseTextureSeed = resolvedSeed;
         _noiseTextureResolution = resolution;
-        EnsureShadowMapTexture();
-        UpdateShadowMap(0f);
+        if (enableShadows || showShadowMap)
+        {
+            EnsureShadowMapTexture();
+            UpdateShadowMap(0f);
+        }
     }
 
     static Texture3D CreateNoiseTexture(string textureName, int resolution, Color32[] pixels)

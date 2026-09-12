@@ -79,9 +79,61 @@ public class Planet : MonoBehaviour
 
     IEnumerator Start()
     {
+        // Let the early boot splash / frontend loading UI paint before mesh work.
+        yield return null;
+        yield return new WaitForEndOfFrame();
+
         if (shapeSettings != null && colourSettings != null)
         {
-            GeneratePlanet();
+            // Spread the bake across frames so loading jokes keep updating.
+            PlanetBuildingPads.BakeFromScene(this);
+            yield return null;
+            Initialize();
+            yield return null;
+
+            for (int i = 0; i < 6; i++)
+            {
+                if (meshFilters != null &&
+                    i < meshFilters.Length &&
+                    meshFilters[i] != null &&
+                    meshFilters[i].gameObject.activeSelf &&
+                    terrainFaces != null &&
+                    i < terrainFaces.Length &&
+                    terrainFaces[i] != null)
+                {
+                    terrainFaces[i].ConstructMesh();
+                    MeshCollider collider = meshFilters[i].GetComponent<MeshCollider>();
+                    if (collider != null)
+                    {
+                        collider.sharedMesh = null;
+                        collider.sharedMesh = meshFilters[i].sharedMesh;
+                    }
+                }
+                yield return null;
+            }
+
+            if (colourGenerator != null && shapeGenerator != null)
+                colourGenerator.UpdateElevation(shapeGenerator.elevationMinMax);
+            yield return null;
+
+            if (colourGenerator != null)
+                colourGenerator.UpdateColours();
+            for (int i = 0; i < 6; i++)
+            {
+                if (meshFilters != null &&
+                    i < meshFilters.Length &&
+                    meshFilters[i] != null &&
+                    meshFilters[i].gameObject.activeSelf &&
+                    terrainFaces != null &&
+                    i < terrainFaces.Length &&
+                    terrainFaces[i] != null)
+                {
+                    terrainFaces[i].UpdateUVs(colourGenerator);
+                }
+                yield return null;
+            }
+
+            PlanetBuildingPads.NotifyFoliageConsumers();
             yield return null;
             yield return null; // Allow mesh colliders and physics to update
             IsGenerated = true;

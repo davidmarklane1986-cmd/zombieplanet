@@ -9,17 +9,6 @@ public static class FactionStrengthSystem
     }
 }
 
-/// <summary>Centralized balance facade; the director owns the actual comparison between factions.</summary>
-public static class FactionBalanceSystem
-{
-    public static float GrowthModifier(FactionController faction)
-    {
-        return faction != null && faction.Simulation != null
-            ? faction.Simulation.GetGrowthModifier(faction)
-            : 1f;
-    }
-}
-
 /// <summary>
 /// Keeps state transitions in one small service. Combat units may request retreat, while the
 /// director remains responsible for global engagement and economy transitions.

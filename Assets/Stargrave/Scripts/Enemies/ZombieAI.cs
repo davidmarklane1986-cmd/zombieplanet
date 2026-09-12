@@ -132,6 +132,7 @@ public class ZombieAI : MonoBehaviour
     Transform player;
     FactionNpc _npcTarget;
     bool _attackingNpc;
+    bool _attackingSwarm;
     Rigidbody rb;
     ZombieVoice _voice;
     Vector3 currentDirection;
@@ -208,6 +209,7 @@ public class ZombieAI : MonoBehaviour
         _cachedChasing = false;
         _npcTarget = null;
         _attackingNpc = false;
+        _attackingSwarm = false;
         if (maxShotsToKill >= minShotsToKill && minShotsToKill > 0)
             currentHealth = Random.Range(minShotsToKill, maxShotsToKill + 1);
         else
@@ -1070,8 +1072,18 @@ public class ZombieAI : MonoBehaviour
         float distanceToNpcSq = nearbyNpc != null
             ? (nearbyNpc.transform.position - transform.position).sqrMagnitude
             : float.PositiveInfinity;
-        bool targetNpc = nearbyNpc != null && distanceToNpcSq < distanceToPlayerSq;
+        float distanceToSwarmSq = float.PositiveInfinity;
+        int swarmIndex = -1;
+        if (Stargrave.Rts2.Rts2UnitSim.HasInstance)
+            Stargrave.Rts2.Rts2UnitSim.Instance.TryFindNearestUnit(transform.position, detectionRadius, -1, out swarmIndex, out distanceToSwarmSq);
+        bool targetNpc = nearbyNpc != null &&
+                         distanceToNpcSq <= distanceToPlayerSq &&
+                         distanceToNpcSq <= distanceToSwarmSq;
+        bool targetSwarm = swarmIndex >= 0 &&
+                           distanceToSwarmSq < distanceToPlayerSq &&
+                           distanceToSwarmSq < distanceToNpcSq;
         _npcTarget = targetNpc ? nearbyNpc : null;
+        _attackingSwarm = targetSwarm;
         float attackRadiusSq = attackRadius * attackRadius;
         float detectionRadiusSq = detectionRadius * detectionRadius;
         float farSq = farDecisionDistance * farDecisionDistance;
@@ -1090,11 +1102,14 @@ public class ZombieAI : MonoBehaviour
         {
             bool provoked = IsProvoked();
             bool useNpcTarget = targetNpc && !provoked;
+            bool useSwarmTarget = targetSwarm && !provoked && !useNpcTarget;
             // Detection does NOT require a full-AI performance slot — if the player is within range, aggro.
-            bool detectsPlayer = !useNpcTarget && distanceToPlayerSq <= detectionRadiusSq;
+            bool detectsPlayer = !useNpcTarget && !useSwarmTarget && distanceToPlayerSq <= detectionRadiusSq;
             bool detectsNpc = useNpcTarget && distanceToNpcSq <= detectionRadiusSq;
-            bool chasing = provoked || detectsPlayer || detectsNpc;
+            bool detectsSwarm = useSwarmTarget && distanceToSwarmSq <= detectionRadiusSq;
+            bool chasing = provoked || detectsPlayer || detectsNpc || detectsSwarm;
             _attackingNpc = useNpcTarget;
+            _attackingSwarm = useSwarmTarget;
 
             // Keep an engaged provoked zombie locked on once it closes within detection range.
             if (provoked && detectsPlayer)
@@ -1109,17 +1124,27 @@ public class ZombieAI : MonoBehaviour
                 _cachedChasing = chasing;
                 _cachedTargetPos = landTarget;
             }
-            else if (chasing && (useNpcTarget ? distanceToNpcSq : distanceToPlayerSq) <= attackRadiusSq)
+            else if (chasing && (useNpcTarget ? distanceToNpcSq : useSwarmTarget ? distanceToSwarmSq : distanceToPlayerSq) <= attackRadiusSq)
             {
                 _cachedShouldAttack = true;
                 _cachedChasing = true;
-                _cachedTargetPos = useNpcTarget ? nearbyNpc.transform.position : player.position;
+                if (useNpcTarget)
+                    _cachedTargetPos = nearbyNpc.transform.position;
+                else if (useSwarmTarget && swarmIndex >= 0)
+                    _cachedTargetPos = Stargrave.Rts2.Rts2UnitSim.Instance.GetWorldPosition(swarmIndex);
+                else
+                    _cachedTargetPos = player.position;
             }
             else if (chasing)
             {
                 _cachedShouldAttack = false;
                 _cachedChasing = true;
-                _cachedTargetPos = useNpcTarget ? nearbyNpc.transform.position : player.position;
+                if (useNpcTarget)
+                    _cachedTargetPos = nearbyNpc.transform.position;
+                else if (useSwarmTarget && swarmIndex >= 0)
+                    _cachedTargetPos = Stargrave.Rts2.Rts2UnitSim.Instance.GetWorldPosition(swarmIndex);
+                else
+                    _cachedTargetPos = player.position;
             }
             else
             {
@@ -1289,6 +1314,10 @@ public class ZombieAI : MonoBehaviour
         if (_attackingNpc && _npcTarget != null && !_npcTarget.IsDead)
         {
             _npcTarget.TakeFactionDamage(attackDamage, transform);
+        }
+        else if (_attackingSwarm && Stargrave.Rts2.Rts2UnitSim.HasInstance)
+        {
+            Stargrave.Rts2.Rts2UnitSim.Instance.ApplyDamageAt(transform.position, attackRadius, attackDamage, -1);
         }
         else if (player != null && !PlayerHealth.IsDead)
             player.SendMessage("TakeDamage", attackDamage, SendMessageOptions.DontRequireReceiver);

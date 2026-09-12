@@ -11,7 +11,7 @@ public sealed class ProceduralPlanetCloudsRendererFeature : ScriptableRendererFe
     {
         public RenderPassEvent renderPassEvent = RenderPassEvent.AfterRenderingTransparents;
         [Tooltip("Use the spherical full-screen volume pass. Disable to use the proxy shell fallback.")]
-        public bool useFullscreenPass = false;
+        public bool useFullscreenPass = true;
     }
 
     public Settings settings = new Settings();
@@ -32,12 +32,16 @@ public sealed class ProceduralPlanetCloudsRendererFeature : ScriptableRendererFe
 
         if (_pass == null ||
             renderingData.cameraData.cameraType == CameraType.Preview ||
-            renderingData.cameraData.cameraType == CameraType.Reflection ||
-            renderingData.cameraData.cameraType == CameraType.SceneView)
+            renderingData.cameraData.cameraType == CameraType.Reflection)
             return;
 
         Camera camera = renderingData.cameraData.camera;
-        if (camera == null || camera.targetTexture != null)
+        if (camera == null)
+            return;
+        // Scene View always renders into a target texture; still allow it so the
+        // outside of the cloud sphere is not a pink proxy / missing volume.
+        if (camera.targetTexture != null &&
+            renderingData.cameraData.cameraType != CameraType.SceneView)
             return;
 
         ProceduralPlanetClouds clouds = ProceduralPlanetClouds.ActiveInstance;

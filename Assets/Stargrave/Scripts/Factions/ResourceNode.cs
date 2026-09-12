@@ -99,6 +99,24 @@ public sealed class ResourceNode : MonoBehaviour
         return amount;
     }
 
+    /// <summary>Swarm sim harvest without a FactionNpc reservation slot.</summary>
+    public int SwarmGather(FactionController owner, int requestedAmount)
+    {
+        if (owner == null || !IsAvailable || requestedAmount <= 0)
+            return 0;
+
+        // Swarm does not use MonoBehaviour reservation slots — many capsules may share a rock/tree.
+        int amount = Mathf.Min(requestedAmount, CurrentAmount);
+        CurrentAmount -= amount;
+        if (CurrentAmount <= 0)
+        {
+            CurrentAmount = 0;
+            _cooldownUntil = Time.time + cooldownSeconds;
+            _workers.Clear();
+        }
+        return amount;
+    }
+
     void TryRefill()
     {
         if (_cooldownUntil > 0f && Time.time >= _cooldownUntil)

@@ -9,12 +9,14 @@ public static class FactionRegistry
     static readonly List<FactionController> s_Factions = new List<FactionController>(4);
     static readonly List<FactionNpc> s_Npcs = new List<FactionNpc>(128);
     static readonly List<ResourceNode> s_Resources = new List<ResourceNode>(512);
+    static readonly List<ClaimableTown> s_Towns = new List<ClaimableTown>(16);
     static bool s_WarfareEnabled;
 
     public static bool WarfareEnabled => s_WarfareEnabled;
     public static IReadOnlyList<FactionController> Factions => s_Factions;
     public static IReadOnlyList<FactionNpc> Npcs => s_Npcs;
     public static IReadOnlyList<ResourceNode> Resources => s_Resources;
+    public static IReadOnlyList<ClaimableTown> Towns => s_Towns;
 
     public static void RegisterFaction(FactionController faction)
     {
@@ -52,6 +54,18 @@ public static class FactionRegistry
             s_Resources.Remove(node);
     }
 
+    public static void RegisterTown(ClaimableTown town)
+    {
+        if (town != null && !s_Towns.Contains(town))
+            s_Towns.Add(town);
+    }
+
+    public static void UnregisterTown(ClaimableTown town)
+    {
+        if (town != null)
+            s_Towns.Remove(town);
+    }
+
     public static void EnableWarfare()
     {
         if (s_WarfareEnabled)
@@ -65,8 +79,10 @@ public static class FactionRegistry
         s_Factions.Clear();
         s_Npcs.Clear();
         s_Resources.Clear();
+        s_Towns.Clear();
         s_WarfareEnabled = false;
         FactionTradeSystem.Reset();
+        FactionBalanceSystem.Reset();
     }
 
     public static FactionNpc FindNearestNpc(Vector3 position, float radius, FactionController excludeFaction = null)
@@ -135,7 +151,7 @@ public static class FactionRegistry
                 s_Npcs.RemoveAt(i);
                 continue;
             }
-            if (npc.Role != FactionNpcRole.Soldier)
+            if (!FactionNpcRoles.IsCombatSoldier(npc.Role))
                 continue;
             if ((npc.transform.position - position).sqrMagnitude > radiusSq)
                 continue;

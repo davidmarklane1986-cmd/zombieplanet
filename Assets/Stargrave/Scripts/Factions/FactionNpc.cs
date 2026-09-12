@@ -13,6 +13,7 @@ public sealed class FactionNpc : MonoBehaviour, IFactionDamageable
     public WorkerAI Worker { get; private set; }
     public SoldierAI Soldier { get; private set; }
     public MerchantAI Merchant { get; private set; }
+    public NobleAI Noble { get; private set; }
     public bool IsDead => Health == null || Health.IsDead;
     public int CurrentHealth => Health != null ? Health.CurrentHealth : 0;
     public int MaxHealth => Health != null ? Health.MaxHealth : 1;
@@ -32,16 +33,52 @@ public sealed class FactionNpc : MonoBehaviour, IFactionDamageable
             surfaceAxis);
     }
 
-    public static FactionNpc CreateSoldier(FactionController faction, Vector3 surfaceAxis)
+    public static FactionNpc CreateInfantry(FactionController faction, Vector3 surfaceAxis)
     {
         if (faction == null || faction.Simulation == null)
             return null;
 
         return Create(
             faction,
-            FactionNpcRole.Soldier,
+            FactionNpcRole.Infantry,
             faction.Simulation.soldierCharacter,
             surfaceAxis);
+    }
+
+    public static FactionNpc CreateArcher(FactionController faction, Vector3 surfaceAxis)
+    {
+        if (faction == null || faction.Simulation == null)
+            return null;
+
+        PlayableCharacterDef visual = faction.Simulation.archerCharacter != null
+            ? faction.Simulation.archerCharacter
+            : faction.Simulation.soldierCharacter;
+        return Create(
+            faction,
+            FactionNpcRole.Archer,
+            visual,
+            surfaceAxis);
+    }
+
+    public static FactionNpc CreateNoble(FactionController faction, Vector3 surfaceAxis)
+    {
+        if (faction == null || faction.Simulation == null)
+            return null;
+
+        PlayableCharacterDef visual = faction.Simulation.nobleCharacter != null
+            ? faction.Simulation.nobleCharacter
+            : faction.Simulation.workerCharacter;
+        return Create(
+            faction,
+            FactionNpcRole.Noble,
+            visual,
+            surfaceAxis);
+    }
+
+    /// <summary>Legacy alias — trains infantry.</summary>
+    public static FactionNpc CreateSoldier(FactionController faction, Vector3 surfaceAxis)
+    {
+        return CreateInfantry(faction, surfaceAxis);
     }
 
     public static FactionNpc CreateMerchant(FactionController faction, Vector3 surfaceAxis)
@@ -54,6 +91,22 @@ public sealed class FactionNpc : MonoBehaviour, IFactionDamageable
             FactionNpcRole.Merchant,
             faction.Simulation.workerCharacter,
             surfaceAxis);
+    }
+
+    static int MaxHealthForRole(FactionController faction, FactionNpcRole role)
+    {
+        FactionCombatSettings combat = faction.Combat;
+        switch (role)
+        {
+            case FactionNpcRole.Infantry:
+                return combat.soldierMaxHealth;
+            case FactionNpcRole.Archer:
+                return combat.archerMaxHealth;
+            case FactionNpcRole.Noble:
+                return combat.nobleMaxHealth;
+            default:
+                return Mathf.Max(1, combat.soldierMaxHealth / 2);
+        }
     }
 
     static FactionNpc Create(
@@ -100,9 +153,7 @@ public sealed class FactionNpc : MonoBehaviour, IFactionDamageable
         go.AddComponent<CharacterAlign>();
         npc.Motor = go.AddComponent<FactionNpcMotor>();
         npc.Health = go.AddComponent<FactionHealth>();
-        npc.Health.Configure(role == FactionNpcRole.Soldier
-            ? faction.Combat.soldierMaxHealth
-            : Mathf.Max(1, faction.Combat.soldierMaxHealth / 2));
+        npc.Health.Configure(MaxHealthForRole(faction, role));
 
         if (role == FactionNpcRole.ResourceGatherer)
         {
@@ -113,6 +164,10 @@ public sealed class FactionNpc : MonoBehaviour, IFactionDamageable
         {
             npc.Merchant = go.AddComponent<MerchantAI>();
             go.AddComponent<WorkerInventory>();
+        }
+        else if (role == FactionNpcRole.Noble)
+        {
+            npc.Noble = go.AddComponent<NobleAI>();
         }
         else
         {
@@ -146,7 +201,7 @@ public sealed class FactionNpc : MonoBehaviour, IFactionDamageable
     {
         if (Health != null)
             Health.TakeFactionDamage(amount, attacker);
-        if (Role == FactionNpcRole.Soldier && Soldier != null && !IsDead)
+        if (FactionNpcRoles.IsCombatSoldier(Role) && Soldier != null && !IsDead)
             Soldier.NotifyUnderFire(attacker);
     }
 
