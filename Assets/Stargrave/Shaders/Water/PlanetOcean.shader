@@ -7,10 +7,10 @@
 // Instead of running as a Built-in-RP post effect, this renders on a transparent sphere
 // "shell" mesh at the ocean radius. The fragment shader still performs Seb's per-pixel
 // ray-sphere intersection from the camera and samples the URP scene depth texture to find
-// the water-column thickness between the ocean surface and the terrain/scene behind it,
-// reproducing the shallow/deep colour blend, soft shoreline, sun specular and triplanar
-// wave normals. No water mesh tessellation and no pole stretching (all shading is derived
-// from world position + radial-up), so it stays spherical everywhere.
+// the water-column thickness between the ocean surface and the terrain/scene behind it.
+// Detail ripples, shoreline foam, and shallow caustics are procedural, so the surface
+// does not depend on the Git LFS normal maps. Sea level and the swell used for buoyancy
+// are unchanged.
 Shader "Stargrave/Planet Ocean"
 {
     Properties
@@ -29,12 +29,18 @@ Shader "Stargrave/Planet Ocean"
         _FresnelPower ("Fresnel Power", Range(0.1, 12)) = 4
         _FresnelStrength ("Fresnel Strength", Range(0, 1)) = 0.35
 
-        [Header(Waves (triplanar normals))]
-        [Normal] _WaveNormalA ("Wave Normal A", 2D) = "bump" {}
-        [Normal] _WaveNormalB ("Wave Normal B", 2D) = "bump" {}
-        _WaveStrength ("Wave Strength", Range(0, 1)) = 0.5
+        [Header(Waves (procedural detail))]
+        // Detail ripples are generated in the shader. The old normal maps are Git LFS
+        // pointers in this repo, so sampling them shaded the surface with garbage.
+        _WaveStrength ("Wave Strength", Range(0, 1)) = 0.55
         _WaveNormalScale ("Wave Normal Scale", Range(0.1, 80)) = 18
-        _WaveSpeed ("Wave Speed", Range(0, 1)) = 0.12
+        _WaveSpeed ("Wave Speed", Range(0, 1)) = 0.08
+
+        [Header(Shore foam and caustics)]
+        _FoamColor ("Foam Colour", Color) = (0.93, 0.98, 1, 1)
+        _FoamWidth ("Foam Width (world units)", Range(0.5, 40)) = 6
+        _FoamStrength ("Foam Strength", Range(0, 1)) = 0.85
+        _CausticStrength ("Caustic Strength", Range(0, 2)) = 0.7
 
         [Header(Waves (geometric surface swell))]
         // World-space crest height of the physical surface ripple. Locked to world units
@@ -118,11 +124,13 @@ Shader "Stargrave/Planet Ocean"
                 float _Smoothness;
                 float _FresnelPower;
                 float _FresnelStrength;
-                float4 _WaveNormalA_ST;
-                float4 _WaveNormalB_ST;
                 float _WaveStrength;
                 float _WaveNormalScale;
                 float _WaveSpeed;
+                float4 _FoamColor;
+                float _FoamWidth;
+                float _FoamStrength;
+                float _CausticStrength;
                 float _WaveHeight;
                 float _WaveFadeDistance;
                 float _WaveNormalStrength;
@@ -130,8 +138,7 @@ Shader "Stargrave/Planet Ocean"
                 float _WaveShoreMinCalm;
             CBUFFER_END
 
-            TEXTURE2D(_WaveNormalA);   SAMPLER(sampler_WaveNormalA);
-            TEXTURE2D(_WaveNormalB);   SAMPLER(sampler_WaveNormalB);
+            #include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/DeclareOpaqueTexture.hlsl"
 
             // ---- Driver-pushed globals (mirrors PlanetAtmosphereLayer convention) ----
             float3 _OceanCentre;
@@ -279,40 +286,55 @@ Shader "Stargrave/Planet Ocean"
                 return float2(kMaxFloat, 0.0);
             }
 
-            // Reoriented Normal Mapping blend (Seb Lague, Triplanar.cginc)
-            float3 blend_rnm(float3 n1, float3 n2)
+            // Analytic ripple height. Two scrolling layers replace the missing normal maps.
+            float RippleHeight(float2 uv)
             {
-                n1.z += 1.0;
-                n2.xy = -n2.xy;
-                return n1 * dot(n1, n2) / n1.z - n2;
+                float h = sin(uv.x * 1.15 + uv.y * 0.65);
+                h += sin(uv.x * 2.35 - uv.y * 1.85 + 1.7) * 0.55;
+                h += sin((uv.x + uv.y) * 4.4 + 0.6) * 0.25;
+                return h;
             }
 
-            // Triplanar normal in world space (no UVs/poles). Ported from Seb's Triplanar.cginc to URP.
-            float3 triplanarNormal(float3 vertPos, float3 normal, float scale, float2 offset,
-                                   TEXTURE2D_PARAM(normalMap, samplerNM))
+            // Triplanar slope from the ripple field, tilted off the geometric wave normal.
+            float3 ProceduralWaveNormal(float3 vertPos, float3 normal, float scale, float2 offset, float strength)
             {
-                float3 absNormal = abs(normal);
-                float3 blendWeight = saturate(pow(absNormal, 4.0));
+                float3 blendWeight = saturate(pow(abs(normal), 4.0));
                 blendWeight /= max(dot(blendWeight, 1.0), 1e-5);
 
+                const float e = 0.04;
                 float2 uvX = vertPos.zy * scale + offset;
                 float2 uvY = vertPos.xz * scale + offset;
                 float2 uvZ = vertPos.xy * scale + offset;
 
-                float3 tnX = UnpackNormal(SAMPLE_TEXTURE2D(normalMap, samplerNM, uvX));
-                float3 tnY = UnpackNormal(SAMPLE_TEXTURE2D(normalMap, samplerNM, uvY));
-                float3 tnZ = UnpackNormal(SAMPLE_TEXTURE2D(normalMap, samplerNM, uvZ));
+                float2 slopeX = float2(RippleHeight(uvX) - RippleHeight(uvX + float2(e, 0)),
+                                       RippleHeight(uvX) - RippleHeight(uvX + float2(0, e)));
+                float2 slopeY = float2(RippleHeight(uvY) - RippleHeight(uvY + float2(e, 0)),
+                                       RippleHeight(uvY) - RippleHeight(uvY + float2(0, e)));
+                float2 slopeZ = float2(RippleHeight(uvZ) - RippleHeight(uvZ + float2(e, 0)),
+                                       RippleHeight(uvZ) - RippleHeight(uvZ + float2(0, e)));
+                float2 slope = (slopeX * blendWeight.x + slopeY * blendWeight.y + slopeZ * blendWeight.z) * strength;
 
-                tnX = blend_rnm(float3(normal.zy, absNormal.x), tnX);
-                tnY = blend_rnm(float3(normal.xz, absNormal.y), tnY);
-                tnZ = blend_rnm(float3(normal.xy, absNormal.z), tnZ);
+                float3 upRef = (abs(normal.y) < 0.99) ? float3(0, 1, 0) : float3(1, 0, 0);
+                float3 tangent = normalize(cross(normal, upRef));
+                float3 bitangent = cross(normal, tangent);
+                return normalize(normal + tangent * slope.x + bitangent * slope.y);
+            }
 
-                float3 axisSign = sign(normal);
-                tnX.z *= axisSign.x;
-                tnY.z *= axisSign.y;
-                tnZ.z *= axisSign.z;
+            float ShoreFoam(float columnDepth, float3 worldPos, float time)
+            {
+                float band = 1.0 - saturate(columnDepth / max(_FoamWidth, 0.25));
+                band = smoothstep(0.05, 0.9, band);
+                float streak = RippleHeight(worldPos.xz * 0.09 + float2(time * 0.35, time * 0.1));
+                streak = saturate(streak * 0.3 + 0.62);
+                return band * streak;
+            }
 
-                return normalize(tnX.zyx * blendWeight.x + tnY.xzy * blendWeight.y + tnZ.xyz * blendWeight.z);
+            float CausticMask(float3 worldPos, float time, float scale)
+            {
+                float2 uv = worldPos.xz * scale * 2.4;
+                float a = RippleHeight(uv + time * 0.45);
+                float b = RippleHeight(uv * 1.7 - time * 0.3 + 2.2);
+                return pow(saturate(a * b * 0.22 + 0.35), 5.0);
             }
 
             half4 frag(Varyings input, FRONT_FACE_TYPE cullFace : FRONT_FACE_SEMANTIC) : SV_Target
@@ -402,37 +424,31 @@ Shader "Stargrave/Planet Ocean"
                 float2 slope = (float2(hA, hB) - h0) / gEps * dispAmp;       // d(displacement)/d(tangent)
                 float3 geoNormal = normalize(sphereNormal - (tA * slope.x + tB * slope.y));
 
-                // Scrolling triplanar wave normals -- "the water effect" -- layered ON TOP of the geometric
-                // wave normal (no pole stretch). Sampled at the DISPLACED position so the organic pattern
-                // sits on the moving surface. Tiling is locked to WORLD space (constant size & scroll speed
-                // relative to the player) so a bigger planet gets MORE ripples not larger ones; same waveScale
-                // & _Time.y * _WaveSpeed clock as the swell, so geometry, shading and shimmer stay in sync.
+                // Procedural detail ripples on the displaced surface. Two scroll directions so the
+                // pattern doesn't lock to one sine grid. No normal-map sample: those textures are
+                // empty LFS pointers and were shading the old water with garbage.
                 float tWave = OceanWaveTime();
-                float2 waveOffsetA = float2(tWave * _WaveSpeed, tWave * _WaveSpeed * 0.8);
-                float2 waveOffsetB = float2(tWave * _WaveSpeed * -0.8, tWave * _WaveSpeed * -0.3);
-                float3 waveNormal = triplanarNormal(oceanIntersect, geoNormal, waveScale, waveOffsetA,
-                                                    TEXTURE2D_ARGS(_WaveNormalA, sampler_WaveNormalA));
-                waveNormal = triplanarNormal(oceanIntersect, waveNormal, waveScale, waveOffsetB,
-                                             TEXTURE2D_ARGS(_WaveNormalB, sampler_WaveNormalB));
-                waveNormal = normalize(lerp(geoNormal, waveNormal, _WaveStrength * waveDepthFactor));
+                float detailStrength = 14.0 * _WaveStrength * waveDepthFactor;
+                float3 waveNormal = ProceduralWaveNormal(oceanIntersect, geoNormal, waveScale,
+                    float2(tWave * _WaveSpeed, tWave * _WaveSpeed * 0.75), detailStrength);
+                waveNormal = ProceduralWaveNormal(oceanIntersect, waveNormal, waveScale * 1.65,
+                    float2(tWave * _WaveSpeed * -0.65, tWave * _WaveSpeed * -0.28), detailStrength * 0.55);
+                waveNormal = normalize(lerp(geoNormal, waveNormal, saturate(_WaveStrength * waveDepthFactor)));
 
-                // Readable surface RELIEF for the diffuse + fresnel terms: the macro geoNormal already gives
-                // the real wave shape; add the triplanar DETAIL tilt (its deviation from geoNormal) amplified
-                // by _WaveNormalStrength so the fine sun-facing/back slopes read clearly on top of the waves.
                 float3 detailDev = waveNormal - dot(waveNormal, geoNormal) * geoNormal;
                 float3 reliefNormal = normalize(geoNormal + (_WaveNormalStrength * waveDepthFactor) * detailDev);
 
-                // Main directional (sun). At night intensity is 0, so this drops out and the moon
-                // (additional directional) lights the water — no night floor or wrap.
                 Light mainLight = GetMainLight();
                 float3 dirToSun = normalize(mainLight.direction);
+                float3 viewDir = -rayDir;
                 half nDotL = saturate(dot(reliefNormal, dirToSun));
-                half3 sunDiffuse = mainLight.color * nDotL;
+                half wrap = saturate(dot(reliefNormal, dirToSun) * 0.5 + 0.5);
+                half3 sunDiffuse = mainLight.color * lerp(nDotL, wrap, 0.35);
 
-                float specularAngle = acos(saturate(dot(normalize(dirToSun - rayDir), waveNormal)));
-                float specularExponent = specularAngle / max(1.0 - _Smoothness, 1e-3);
-                half3 sunSpec = exp(-specularExponent * specularExponent) * nDotL
-                    * mainLight.color * _SpecularColor.rgb;
+                float3 halfDir = normalize(dirToSun + viewDir);
+                float specPower = exp2(10.0 * saturate(_Smoothness));
+                half specDot = pow(saturate(dot(waveNormal, halfDir)), specPower);
+                half3 sunSpec = specDot * nDotL * mainLight.color * _SpecularColor.rgb;
 
                 half3 addSpec;
                 half3 addDiffuse = StargraveApplyAdditionalLightsWater(
@@ -440,14 +456,31 @@ Shader "Stargrave/Planet Ocean"
                     _SpecularColor.rgb, _Smoothness, addSpec);
 
                 half3 totalDiffuse = sunDiffuse + addDiffuse;
-                half fresnel = pow(saturate(1.0 - saturate(dot(reliefNormal, -rayDir))), _FresnelPower);
-                half3 rim = fresnel * _FresnelStrength * totalDiffuse * _SpecularColor.rgb;
+                half fresnel = pow(saturate(1.0 - saturate(dot(reliefNormal, viewDir))), _FresnelPower);
+                half3 skyTint = lerp(_DeepColor.rgb, half3(0.62, 0.78, 0.9), 0.65);
+                half3 rim = fresnel * _FresnelStrength * (skyTint + totalDiffuse * 0.35) * _SpecularColor.rgb;
 
-                oceanCol = oceanCol * (totalDiffuse + SampleSH(sphereNormal)) + sunSpec + addSpec + rim;
+                // Shallows show a refracted view of the opaque scene (the seabed). Deeper water
+                // takes over with the water colour. Alpha still softens the shoreline.
+                float2 refractUv = screenUV + waveNormal.xy * (0.012 * (1.0 - saturate(depthT)));
+                half3 seabed = SampleSceneColor(refractUv);
+                half3 waterBody = oceanCol * (totalDiffuse + SampleSH(sphereNormal)) + sunSpec + addSpec + rim;
+                half shore = saturate(alpha);
+                oceanCol = lerp(seabed * lerp(half3(1, 1, 1), oceanCol, 0.45), waterBody, shore);
+
+                float caustics = CausticMask(oceanIntersect, tWave, waveScale);
+                oceanCol += _ShallowColor.rgb * caustics * _CausticStrength * (1.0 - saturate(depthT)) * nDotL;
+
+                float foam = ShoreFoam(oceanViewDepth, oceanIntersect, tWave) * _FoamStrength;
+                float crest = saturate(OceanSwellHeight(surfaceWS));
+                crest = smoothstep(0.55, 0.95, crest) * waveDepthFactor * _FoamStrength * 0.45;
+                foam = saturate(foam + crest);
+                oceanCol = lerp(oceanCol, _FoamColor.rgb, foam);
+
                 half fogFactor = InitializeInputDataFog(float4(surfaceWS, 1.0), 0);
                 oceanCol = MixFog(oceanCol, fogFactor);
 
-                return half4(oceanCol, saturate(alpha));
+                return half4(oceanCol, saturate(max(shore, foam)));
             }
             ENDHLSL
         }

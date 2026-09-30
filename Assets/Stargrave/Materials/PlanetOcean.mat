@@ -33,23 +33,27 @@ Material:
         m_Offset: {x: 0, y: 0}
     m_Ints: []
     m_Floats:
-    - _AlphaMultiplier: 20
+    - _AlphaMultiplier: 10
+    - _CausticStrength: 0.7
     - _Cull: 1
-    - _DepthMultiplier: 8
-    - _FresnelPower: 4
-    - _FresnelStrength: 0.35
-    - _Smoothness: 0.92
+    - _DepthMultiplier: 4.5
+    - _FoamStrength: 0.85
+    - _FoamWidth: 6
+    - _FresnelPower: 5
+    - _FresnelStrength: 0.55
+    - _Smoothness: 0.86
     - _WaveFadeDistance: 280
-    - _WaveHeight: 1.1
-    - _WaveNormalScale: 22
-    - _WaveNormalStrength: 2.2
-    - _WaveShoreDepth: 60
-    - _WaveShoreMinCalm: 0.08
-    - _WaveSpeed: 0.04
-    - _WaveStrength: 0.4
+    - _WaveHeight: 0.85
+    - _WaveNormalScale: 16
+    - _WaveNormalStrength: 1.4
+    - _WaveShoreDepth: 28
+    - _WaveShoreMinCalm: 0.12
+    - _WaveSpeed: 0.07
+    - _WaveStrength: 0.62
     m_Colors:
-    - _DeepColor: {r: 0.049999982, g: 0.17999998, b: 0.39999998, a: 1}
-    - _ShallowColor: {r: 0.09999997, g: 0.53999996, b: 0.65999997, a: 1}
-    - _SpecularColor: {r: 1, g: 1, b: 1, a: 1}
+    - _DeepColor: {r: 0.02, g: 0.11, b: 0.26, a: 1}
+    - _FoamColor: {r: 0.93, g: 0.98, b: 1, a: 1}
+    - _ShallowColor: {r: 0.28, g: 0.78, b: 0.72, a: 1}
+    - _SpecularColor: {r: 1, g: 0.98, b: 0.94, a: 1}
   m_BuildTextureStacks: []
   m_AllowLocking: 1
