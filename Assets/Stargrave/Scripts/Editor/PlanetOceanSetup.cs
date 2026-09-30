@@ -24,8 +24,6 @@ public static class PlanetOceanSetup
 {
     const string TriggerPath = "Assets/Stargrave/.setup_planet_ocean";
     const string MaterialPath = "Assets/Stargrave/Materials/PlanetOcean.mat";
-    // Reuse the kept water normal texture for the wave ripples if it is still present (cosmetic only).
-    const string WaveNormalGuid = "f87d53fcaf34530488b706ee35d9b519";
 
     static PlanetOceanSetup()
     {
@@ -139,25 +137,10 @@ public static class PlanetOceanSetup
             Directory.CreateDirectory(dir);
 
         Material mat = new Material(shader) { name = "PlanetOcean" };
-        TryAssignWaveNormals(mat);
 
         AssetDatabase.CreateAsset(mat, MaterialPath);
         AssetDatabase.SaveAssets();
         return mat;
-    }
-
-    static void TryAssignWaveNormals(Material mat)
-    {
-        string path = AssetDatabase.GUIDToAssetPath(WaveNormalGuid);
-        if (string.IsNullOrEmpty(path))
-            return;
-        Texture2D tex = AssetDatabase.LoadAssetAtPath<Texture2D>(path);
-        if (tex == null)
-            return;
-        if (mat.HasProperty("_WaveNormalA"))
-            mat.SetTexture("_WaveNormalA", tex);
-        if (mat.HasProperty("_WaveNormalB"))
-            mat.SetTexture("_WaveNormalB", tex);
     }
 
     /// <summary>
